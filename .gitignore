@@ -1,0 +1,19 @@
+# Secrets and private data (these live on the Pi only)
+.env
+tuning.json
+memory.json
+people.json
+music_duck.json
+logs/
+captures/
+voices/
+wakeword_clips/
+
+# Python / macOS
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Old experiment
+wakewords/hey_bob_old.onnx

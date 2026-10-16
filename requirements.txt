@@ -1,0 +1,3 @@
+anthropic>=1.13
+# gpiozero, pigpio and picamera2 come from apt (see install.sh) and are
+# visible because the venv is created with --system-site-packages.

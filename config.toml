@@ -1,0 +1,116 @@
+# Bob's settings. Anything left out uses the default in config.py.
+
+[drive]
+type = "dc"                # "dc" = DC motors on a TB6612FNG, "servo" = continuous-rotation servos
+pwm = "auto"               # servo only: hardware PWM if enabled, else pigpio, else software
+left_pin = 12              # servo only: BCM GPIO for the left servo signal wire
+right_pin = 13             # servo only: BCM GPIO for the right servo signal wire
+left_invert = false        # flip if a wheel spins backwards on /fwd
+right_invert = true
+left_trim = 0.0            # drift fix. DC: +0.05 = this wheel 5% faster. Servo: pulse shift
+right_trim = 0.0
+max_speed = 0.8            # global speed cap, also adjustable live with /speed
+max_move_seconds = 3.0     # longest single move Claude (or you) can command
+
+# DC motors on a TB6612FNG (type = "dc"), BCM pin numbers
+dc_left_pwm = 12           # PWMA (hardware PWM if the pwm-2chan overlay is on)
+dc_left_in1 = 5            # AIN1
+dc_left_in2 = 6            # AIN2
+dc_right_pwm = 13          # PWMB
+dc_right_in1 = 16          # BIN1
+dc_right_in2 = 20          # BIN2
+dc_standby = 21            # STBY
+dc_pwm_hz = 20000
+dc_min_duty = 0.25         # raise if motors hum without turning at low speed
+dc_brake = true            # false = coast to a stop
+
+estop_button_pin = -1      # e.g. 26 for a button between GPIO26 and GND
+
+[camera]
+source = "auto"            # "auto" tries the ribbon-cable module, then USB. Or "csi" / "usb"
+device = 0                 # USB only: N in /dev/videoN
+width = 640
+height = 480
+fov_deg = 62.0             # camera's horizontal field of view (used by following and calibration)
+rotate_180 = false         # set true if the camera is mounted upside down
+
+[sensor]
+enabled = false            # HC-SR04 distance sensor; wiring in the README (ECHO needs a voltage divider)
+trigger_pin = 23
+echo_pin = 24
+stop_cm = 15               # forward moves are refused / cut off inside this distance
+max_cm = 200
+
+[follow]
+distance_m = 1.0           # follow-me distance, from the apparent size of the person's face
+max_speed = 0.5
+max_seconds = 60.0
+lost_after_s = 3.0
+turn_gain = 0.9
+forward_gain = 2.5
+deadzone = 0.12
+
+[stream]
+enabled = true             # MJPEG video at http://<pi-ip>:8080/
+host = "0.0.0.0"           # "127.0.0.1" = only reachable through an SSH tunnel
+port = 8080
+fps = 10.0
+dashboard = true           # control page at http://<pi>:8080/dash?token=...  (needs BOB_STREAM_TOKEN, 8+ characters)
+
+[audio]
+tts = "piper"              # natural voice, offline. Falls back to espeak-ng if Piper isn't installed
+piper_model = "en_US-lessac-medium"   # downloaded into voices/ by install.sh; "-low" is faster
+voice = "en-us"            # espeak-ng fallback voice
+speed_wpm = 165
+device = ""                # aplay -D device, e.g. "plughw:1,0" for a USB speaker
+
+[mic]
+enabled = false            # true = start listening at boot
+mode = "hands-free"        # or "push-to-talk": press Tab (or /talk) to start and stop recording
+device = "plughw:CARD=Device,DEV=0"   # arecord -D name for the USB mic (arecord -l lists them); the CARD= form survives reboots
+model = "tiny.en"          # "base.en" is more accurate but slower
+threshold = 0.02           # speech loudness; raise in noisy rooms. /listen shows the live level
+silence_ms = 800
+max_seconds = 15.0
+after_speech_s = 1.0       # deaf this long after Bob speaks, so he doesn't answer himself
+pause_while_driving = true # motor noise ruins transcripts
+
+# Wake word (hands-free mode): Bob ignores speech until he hears it, then listens for wake_window_s.
+wake_engine = "openwakeword"   # "text" = match the word "bob" in the transcript; "off" = react to everything
+wake_model = "wakewords/hey_bob.onnx"   # pretrained: hey_jarvis, alexa, hey_mycroft, hey_rhasspy. Or a trained .onnx file
+wake_threshold = 0.5
+wake_verifier = ""             # optional: a verifier trained on your own voice with wakeword_tools.py (see README)
+wake_confirm = true            # after the model fires, also check the transcript contains "bob" (cuts false wakes from "Hey Rob", "Hey Boss")
+wake_word = "bob"
+wake_window_s = 20.0
+
+[radio]
+enabled = false            # talk to the other robot over Bluetooth (needs BOB_RADIO_SECRET in .env)
+name = "Bob"
+peer_name = "John"
+role = "listen"            # Bob listens; the other robot uses role = "connect" with Bob's address
+peer_address = ""          # only for role = "connect": the other robot's Bluetooth address
+channel = 3
+ai_max_per_minute = 6      # cap on messages Claude may send per minute
+
+[music]
+enabled = false            # Bluetooth speaker + AirPlay receiver; run ./install_music.sh on the Pi first
+bluetooth = true
+airplay = true
+airplay_bus = "session"
+exclusive = true           # the newest source wins; the older is paused
+initial_volume = 0.5
+max_volume = 0.85          # cap for Bob and the console (not the phone's own volume keys)
+duck_level = 0.25          # music falls to this fraction while Bob talks
+duck_hold_s = 0.8
+mic_deaf_while_playing = true
+poll_seconds = 1.0
+
+[brain]
+model = "claude-opus-5-5"
+effort = "low"             # low = quicker reactions; medium/high = more careful
+tick_seconds = 2.0
+max_steps_per_tick = 8
+fallbacks = true
+start_paused = false
+goal = "Explore your surroundings carefully, avoid bumping into things, and be a friendly companion to any people you meet."
