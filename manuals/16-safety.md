@@ -96,7 +96,7 @@ Then put him on the floor and type `/resume`.
 | Thing | Who can reach it | Protection |
 |---|---|---|
 | The console | anyone who can SSH into the Pi | your Pi password; Tailscale |
-| The video stream | anyone on your Wi-Fi, by default | set `BOB_STREAM_TOKEN` |
+| The video stream | only the Pi itself, until you set `BOB_STREAM_TOKEN`; then anyone with the password | `BOB_STREAM_TOKEN` |
 | The dashboard | only with the password | 8+ character `BOB_STREAM_TOKEN`; use it over Tailscale |
 | Bluetooth pairing | only during `/music pair` (2 minutes) | `/music forget` old phones |
 | AirPlay | everyone on your Wi-Fi, by default | `BOB_AIRPLAY_PASSWORD` when installing |

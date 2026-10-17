@@ -33,7 +33,7 @@ Each part's own manual has more detail.
 | `tmux: command not found` | `sudo apt-get install -y tmux` |
 | `openwakeword 0.4.0` was installed | `.venv/bin/pip install --no-deps --upgrade 'openwakeword>=0.6'` |
 | `No module named 'openwakeword'` when scoring | install it the same way as above |
-| Bob won't start: `unknown setting [...]` | a typo in `config.toml`: fix the setting it names |
+| Bob won't start: `unknown setting [...]`, `unknown section [...]` or `isn't one of: ...` | a typo in `config.toml`: fix the setting it names |
 | Bob won't start: `... should be int` (or bool, str) | a setting has the wrong kind of value: compare with [manual 15](15-settings-reference.md) |
 
 ## Motors and driving

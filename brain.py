@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -251,18 +252,34 @@ class Controls:
         return msgs
 
 
+def _write_json_atomically(path: Path, obj) -> None:
+    """Write to a temporary file, then rename it into place, so a power cut can't leave half a file behind."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=1))
+    os.replace(tmp, path)
+
+
 class Memory:
     def __init__(self, path: Path, limit: int = 40):
         self.path, self.limit = path, limit
-        self.notes: list[str] = json.loads(path.read_text()) if path.exists() else []
+        try:
+            data = json.loads(path.read_text()) if path.exists() else []
+            self.notes: list[str] = [str(n) for n in data][-limit:] if isinstance(data, list) else []
+        except (ValueError, OSError):
+            log.warning("%s is damaged: starting with no notes (the old file is kept as %s.bad)", path.name, path.name)
+            self.notes = []
+            try:
+                os.replace(path, path.with_name(path.name + ".bad"))
+            except OSError:
+                pass
 
     def add(self, note: str) -> None:
         self.notes = (self.notes + [note.strip()[:300]])[-self.limit:]
-        self.path.write_text(json.dumps(self.notes, indent=1))
+        _write_json_atomically(self.path, self.notes)
 
     def clear(self) -> None:
         self.notes = []
-        self.path.write_text("[]")
+        _write_json_atomically(self.path, [])
 
 
 class People:
@@ -310,7 +327,7 @@ class People:
                 + f" (last seen {e.get('seen', '?')})" for n, e in self.people.items()]
 
     def _save(self) -> None:
-        self.path.write_text(json.dumps(self.people, indent=1))
+        _write_json_atomically(self.path, self.people)
 
 
 def _image_block(jpeg: bytes) -> dict:

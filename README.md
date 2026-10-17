@@ -246,10 +246,9 @@ while using the console:
 - `http://<pi-ip>:8080/stream`: raw stream (VLC, ffplay, `<img>` tags)
 - `http://<pi-ip>:8080/snapshot.jpg`: one frame
 
-`/camera off` stops the stream too. By default anyone on your Wi-Fi can watch.
-To lock it down, set `BOB_STREAM_TOKEN=something-long` in `.env` and open
-`http://<pi-ip>:8080/?token=something-long`. Or set `host = "127.0.0.1"` in the
-`[stream]` section and view it through an SSH tunnel:
+`/camera off` stops the stream too. **Without a password, the stream only works on the Pi itself.** To
+watch from another device, set `BOB_STREAM_TOKEN=something-long` in `.env` and open
+`http://<pi-ip>:8080/?token=something-long`. Or leave the password off and view it through an SSH tunnel:
 `ssh -L 8080:localhost:8080 adam@<pi-ip>`, then browse to `http://localhost:8080/`.
 
 ## Run at boot
@@ -608,3 +607,13 @@ The startup log should say `Speech engine: piper`. Test it with `/say hello`.
 ![Raspberry Pi](https://img.shields.io/badge/Raspberry_Pi-1000?style=for-the-badge&logo=raspberrypi&logoColor=ffffff&labelColor=A22846&color=a22946)
 ![Google Colab](https://img.shields.io/badge/Google%20Colab-%23F9A825.svg?style=for-the-badge&logo=googlecolab&logoColor=black)
 ![OpenCV](https://img.shields.io/badge/opencv-%23fff.svg?style=for-the-badge&logo=opencv&logoColor=black)
+## Tests
+
+A few checks for the safety-critical bits (settings validation, damaged memory files, the dashboard's
+request checks) run without any hardware:
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+(They need the `anthropic` package: run them inside the Pi's `.venv`, with `.venv/bin/python -m unittest discover -s tests`.)

@@ -125,8 +125,8 @@ class MusicConfig:
     airplay: bool = True
     airplay_bus: str = "session" # where shairport-sync's D-Bus interface lives; "session" for the user service install_music.sh sets up
     exclusive: bool = True       # a new source pauses the older one, so two phones don't play over each other
-    initial_volume: float = 0.5  # each new music stream starts at this level (0-1), so a phone at full volume isn't deafening
-    max_volume: float = 0.85     # the most Bob or the console may set (0-1). It does not limit the phone's own volume keys
+    initial_volume: float = 0.8  # each new music stream starts at this level (0-1); tuned for the small speaker, which is quieter than it sounds
+    max_volume: float = 0.90     # the most Bob or the console may set (0-1). It does not limit the phone's own volume keys
     duck_level: float = 0.25     # while Bob speaks, the music falls to this fraction of its volume
     duck_hold_s: float = 0.8     # ...and returns this long after he finishes, so it doesn't bounce between sentences
     mic_deaf_while_playing: bool = True  # hands-free listening ignores the room while music plays (lyrics would be transcribed)
@@ -162,11 +162,31 @@ class Config:
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 
+# Settings that only make sense with certain words. A typo here must stop Bob, not quietly pick another behaviour
+# (for example "dcc" would otherwise be treated as servo mode and drive the wrong hardware).
+CHOICES = {
+    ("drive", "type"): ("dc", "servo"),
+    ("drive", "pwm"): ("auto", "hardware", "pigpio", "software"),
+    ("camera", "source"): ("auto", "csi", "usb"),
+    ("audio", "tts"): ("piper", "espeak-ng"),
+    ("audio", "player"): ("auto", "pw-play", "aplay"),
+    ("mic", "mode"): ("hands-free", "handsfree", "auto", "push-to-talk", "ptt", "push"),
+    ("mic", "wake_engine"): ("openwakeword", "text", "off"),
+    ("radio", "role"): ("listen", "connect"),
+    ("music", "airplay_bus"): ("session", "system"),
+    ("brain", "effort"): ("low", "medium", "high", "xhigh", "max"),
+}
+
+
 def load(path: Path) -> Config:
     cfg = Config()
     if not path.exists():
         return cfg
     data = tomllib.loads(path.read_text())
+    sections = {f.name for f in fields(cfg)}
+    for name in data:
+        if name not in sections:
+            raise ValueError(f"{path}: unknown section [{name}] (known: {', '.join(sorted(sections))})")
     for section in fields(cfg):
         values = data.get(section.name, {})
         target = getattr(cfg, section.name)
@@ -179,5 +199,8 @@ def load(path: Path) -> Config:
                 value = float(value)
             if type(value) is not type(default):
                 raise ValueError(f"{path}: [{section.name}] {key} should be {type(default).__name__}")
+            allowed = CHOICES.get((section.name, key))
+            if allowed and str(value).lower() not in allowed:
+                raise ValueError(f"{path}: [{section.name}] {key} = {value!r} isn't one of: {', '.join(allowed)}")
             setattr(target, key, value)
     return cfg

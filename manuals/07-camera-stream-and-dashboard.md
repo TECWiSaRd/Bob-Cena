@@ -77,7 +77,8 @@ While Bob runs, his camera view is available in any web browser on the same netw
 
 Use the Pi's Tailscale name or its IP address in place of `bob`.
 
-**Who can watch:** by default, anyone on your Wi-Fi. To require a password, put a line in `.env`:
+**Who can watch:** with no password set, only the Pi itself (use the SSH tunnel below to see it on your
+computer). To open the stream to your network, protected by a password, put a line in `.env`:
 
 ```
 BOB_STREAM_TOKEN=pick-something-long
@@ -87,7 +88,7 @@ Then add it to the address: `http://bob:8080/?token=pick-something-long`. The pa
 dashboard.
 
 **For the most privacy**, set `host = "127.0.0.1"` under `[stream]`, so the stream is only reachable through
-an SSH tunnel:
+an SSH tunnel even when a password is set:
 ```bash
 ssh -L 8080:localhost:8080 adam@bob
 ```
@@ -96,7 +97,7 @@ then open `http://localhost:8080/` on your Mac.
 | Setting (`[stream]`) | Default | What it does |
 |---|---|---|
 | `enabled` | true | the web server on or off |
-| `host` | `"0.0.0.0"` | `"0.0.0.0"` = reachable on your network; `"127.0.0.1"` = SSH tunnel only |
+| `host` | `"0.0.0.0"` | `"0.0.0.0"` = reachable on your network (but only if `BOB_STREAM_TOKEN` is set; otherwise Bob falls back to `"127.0.0.1"`); `"127.0.0.1"` = SSH tunnel only |
 | `port` | 8080 | the web address port |
 | `fps` | 10 | pictures per second. Lower it to save Pi CPU |
 | `dashboard` | true | the phone control page (needs a password, see below) |

@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -176,6 +177,7 @@ class StreamServer:
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
+            timeout = 30   # a client that goes silent mid-request must not hold a thread forever
 
             def log_message(self, *args):  # keep the console clean
                 pass
@@ -209,8 +211,17 @@ class StreamServer:
                 if "application/json" not in self.headers.get("Content-Type", ""):
                     return self._json({"error": "JSON only"}, 415)   # also blocks simple cross-site form posts
                 try:
-                    n = int(self.headers.get("Content-Length", "0"))
-                    body = json.loads(self.rfile.read(min(n, 4096)) or b"{}")
+                    n = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    self.close_connection = True
+                    return self._json({"error": "Content-Length required"}, 411)
+                if n < 0 or n > 4096:
+                    self.close_connection = True   # the unread body would otherwise be parsed as the next request
+                    return self._json({"error": "bad request size"}, 413 if n > 4096 else 400)
+                try:
+                    body = json.loads(self.rfile.read(n) or b"{}")
+                    if not isinstance(body, dict):
+                        raise ValueError("not an object")
                 except (ValueError, TypeError):
                     return self._json({"error": "bad request"}, 400)
                 try:
@@ -285,11 +296,30 @@ class StreamServer:
                     server.clients -= 1
                     log.info("stream viewer left (%d watching)", server.clients)
 
-        ThreadingHTTPServer.daemon_threads = True
-        self._httpd = ThreadingHTTPServer((self.cfg.host, self.cfg.port), Handler)
+        class Server(ThreadingHTTPServer):
+            daemon_threads = True
+
+            def handle_error(self, request, client_address):
+                # called from inside socketserver's except block, so the active exception is the one to judge
+                exc = sys.exc_info()[1]
+                if exc is None:
+                    return
+                if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+                    # a browser dropping mid-request is routine; keep a trace for debugging
+                    log.debug("stream client %s dropped: %r", client_address[0], exc)
+                    return
+                super().handle_error(request, client_address)
+
+        host = self.cfg.host
+        if not self.token and host not in ("127.0.0.1", "localhost", "::1"):
+            # A camera must not be open to the whole network by accident: no password means this robot only.
+            log.warning("No BOB_STREAM_TOKEN set, so the camera stream is limited to this Pi (reach it with an SSH "
+                        "tunnel). Set BOB_STREAM_TOKEN in .env to make it available on your network.")
+            host = "127.0.0.1"
+        self._httpd = Server((host, self.cfg.port), Handler)
         threading.Thread(target=self._httpd.serve_forever, name="stream", daemon=True).start()
-        auth = " (token required)" if self.token else " (NO password - anyone on your network can watch)"
-        log.info("Camera stream on port %d%s", self.cfg.port, auth)
+        auth = " (token required)" if self.token else " (this Pi only, no password)"
+        log.info("Camera stream on %s:%d%s", host, self.cfg.port, auth)
 
     def stop(self) -> None:
         if self._httpd:

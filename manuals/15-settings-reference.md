@@ -23,7 +23,8 @@ do from the console is saved in **`tuning.json`**.
   whole-number settings must stay whole (`port = 8080`, not `8080.0`).
 - Lines starting with `#` are comments.
 - **A misspelled setting stops Bob from starting**, with a message naming it, such as
-  `unknown setting [drive] max_sped`. That's deliberate, so typos don't go unnoticed.
+  `unknown setting [drive] max_sped`. The same goes for a misspelled `[section]` and for a word that isn't
+  allowed, such as `type = "dcc"` (it must be `"dc"` or `"servo"`). That's deliberate, so typos don't go unnoticed.
 
 **Your settings that differ from the defaults** are marked ★ below.
 
@@ -75,7 +76,7 @@ See [Camera, stream and dashboard](07-camera-stream-and-dashboard.md).
 | Setting | Default | What it does |
 |---|---|---|
 | `enabled` | true | the web server for video and the dashboard |
-| `host` | `"0.0.0.0"` | `"0.0.0.0"` = reachable on your network; `"127.0.0.1"` = only through an SSH tunnel |
+| `host` | `"0.0.0.0"` | `"0.0.0.0"` = reachable on your network, but only when `BOB_STREAM_TOKEN` is set (without one Bob uses `"127.0.0.1"` and logs a warning); `"127.0.0.1"` = only through an SSH tunnel |
 | `port` | 8080 | the port in the web address |
 | `fps` | 10.0 | video pictures per second |
 | `dashboard` | true | the phone control page. Only works with `BOB_STREAM_TOKEN` (8+ characters) in `.env` |

@@ -100,4 +100,5 @@ Restart Bob after restoring.
 | Bob behaves oddly cautiously or fixated | read `/notes`: an old note may be steering him. `/forget` |
 | Bob forgot a conversation | recent conversation resets when Bob restarts; only notes and people last |
 | He calls someone by the wrong name | correct him out loud; or `/people forget <name>` |
+| Log: `memory.json is damaged` | a power cut corrupted it. Bob started with no notes and kept the old file as `memory.json.bad` |
 | `/people` says nobody yet | he only saves people when they introduce themselves |
