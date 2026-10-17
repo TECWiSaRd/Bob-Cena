@@ -112,5 +112,5 @@ effort = "low"             # low = quicker reactions; medium/high = more careful
 tick_seconds = 2.0
 max_steps_per_tick = 8
 fallbacks = true
-start_paused = false
+start_paused = true
 goal = "Explore your surroundings carefully, avoid bumping into things, and be a friendly companion to any people you meet."

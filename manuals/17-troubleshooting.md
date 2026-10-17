@@ -125,6 +125,7 @@ Each part's own manual has more detail.
 | `/music` says music is off | `[music] enabled = true`, after running `./install_music.sh` |
 | `PipeWire tools not found` | run `./install_music.sh` |
 | Phone can't find Bob | `/music pair` again; pairing only stays open for 2 minutes |
+| Phone pairs but shows a phone icon, with no "Media audio" option | the Pi isn't offering the speaker profile: `bluetoothctl show \| grep -i uuid` has no `Audio Sink`. Re-run `./install_music.sh` (it turns off WirePlumber's desktop-login check), then `systemctl --user restart wireplumber`. Forget Bob on the phone and pair again |
 | No AirPlay "Bob" | same Wi-Fi? `systemctl --user status shairport-sync` |
 | Radio: `waiting for John` forever | John running, set to `connect`, pairing done? `bluetoothctl devices` |
 | Radio: `failed authentication` | the two `BOB_RADIO_SECRET` values differ |

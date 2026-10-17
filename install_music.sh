@@ -10,6 +10,8 @@
 #   - installs PipeWire (the audio mixer), WirePlumber, BlueZ, bluez-tools, shairport-sync, avahi and python3-dbus
 #   - turns on "linger" for your user, so PipeWire and AirPlay keep running without a login
 #   - sets /etc/bluetooth/main.conf "JustWorksRepairing = always" (lets a phone re-pair after you forgot it)
+#   - writes ~/.config/wireplumber/wireplumber.conf.d/51-bob-bluez.conf so Bluetooth audio works with no desktop login
+#     (without it the Pi never offers itself as a speaker, and a phone shows only a phone icon)
 #   - disables shairport-sync's system service and runs it as YOUR user service instead (required with PipeWire)
 #   - writes ~/.config/shairport-sync.conf and ~/.config/systemd/user/shairport-sync.service
 # It does not make the Pi discoverable by Bluetooth: pairing is only open when you run /music pair.
@@ -20,10 +22,11 @@ NAME="${BOB_NAME:-Bob}"
 CONF="$HOME/.config/shairport-sync.conf"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT="$UNIT_DIR/shairport-sync.service"
+WP_CONF="$HOME/.config/wireplumber/wireplumber.conf.d/51-bob-bluez.conf"
 
 if [ "${1:-}" = "--undo" ]; then
     systemctl --user disable --now shairport-sync 2>/dev/null || true
-    rm -f "$UNIT" "$CONF"
+    rm -f "$UNIT" "$CONF" "$WP_CONF"
     systemctl --user daemon-reload || true
     echo "AirPlay receiver removed. PipeWire and Bluetooth are left as they are."
     echo "Set [music] enabled = false in config.toml to switch Bob's music features off."
@@ -64,6 +67,16 @@ if ! grep -qE '^JustWorksRepairing *= *always' "$BTCONF"; then
         echo 'JustWorksRepairing = always' | sudo tee -a "$BTCONF" >/dev/null
     sudo systemctl restart bluetooth
 fi
+# WirePlumber 0.5 only offers Bluetooth audio while a desktop user is logged in. Bob has no desktop.
+mkdir -p "$(dirname "$WP_CONF")"
+cat > "$WP_CONF" <<'WPEOF'
+wireplumber.profiles = {
+  main = {
+    monitor.bluez.seat-monitoring = disabled
+  }
+}
+WPEOF
+systemctl --user restart wireplumber 2>/dev/null || true
 bluetoothctl system-alias "$NAME" >/dev/null 2>&1 || true
 
 echo "== AirPlay (shairport-sync as a user service)"
