@@ -16,6 +16,7 @@ import re
 import signal
 import sys
 import threading
+import time
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -30,6 +31,8 @@ from sensors import RangeSensor
 from calibrate import Calibrator
 from vision import FaceDetector, Follower
 from stream import StreamServer
+from selfcheck import format_report, run_checks
+from timeline import Timeline
 
 BASE = Path(__file__).resolve().parent
 log = logging.getLogger("bob")
@@ -57,6 +60,9 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /music                Bluetooth/AirPlay speaker: status. Also: play|pause|next|prev, vol N|up|down, pair [secs], devices, forget MAC, ai on|off
   /calibrate turn|straight|show  Bob measures his own turn rates / drift with the camera (add 'go' to run)
   /follow [seconds]     follow the nearest face (default 30 s); /follow off stops it
+  /find [seconds]       turn slowly on the spot until a face is seen, then say so (/find off stops)
+  /check                one report: camera, motors, audio, mic, stream, sensor, temperature, power, Wi-Fi, disk
+  /timeline             record what Bob saw and did (on|off, show [n], clear)
   /range                distance sensor reading; also: on|off, stop <cm>
   /talk (or Tab)        push-to-talk: press to start recording, again to send
   /say TEXT             speak through the speaker
@@ -139,12 +145,16 @@ class Controller:
         self.radio = self._make_radio(cfg.radio)
         self.follower = Follower(cfg.follow, cfg.camera.fov_deg, self.camera, self.drive, self.ranger,
                                  lambda: FaceDetector(BASE / "models"))
+        self.timeline = Timeline(cfg.timeline, BASE / "logs" / "timeline")
+        self._last_manual_event = float("-inf")
+        self.drive.on_event = lambda why: self.timeline.record("stop", reason=why)
         self.controls = Controls(cfg.brain.goal, auto=not (paused or cfg.brain.start_paused))
         self.controls.calibration = self.calibration
         self.controls.speed_cap = lambda: self.drive.speed_cap
         self.memory = Memory(BASE / "memory.json")
         self.people = People(BASE / "people.json")
         self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music)
+        self.brain.timeline = self.timeline
 
     def _make_radio(self, rc):
         if not rc.enabled:
@@ -219,6 +229,29 @@ class Controller:
             c.music_ai = rest[0].lower() == "on"
             return f"Bob {'may' if c.music_ai else 'may NOT'} control the music"
         return "usage: /music | play | pause | next | prev | vol N|up|down | pair [seconds] | devices | forget MAC | ai on|off"
+
+    def _announce_find(self, session: int) -> None:
+        """After a /find: say so out loud if it worked. Runs off the console thread.
+
+        It reads the result of its own session, so a find or follow started right afterwards can't change it."""
+        outcome = self.follower.outcome(session, self.cfg.follow.max_seconds + 5)
+        if outcome and outcome[0]:
+            self.audio.play("chirp")
+            self.audio.say("There you are!")
+
+    def timeline_command(self, words: list[str]) -> str:
+        tl = self.timeline
+        if not words:
+            return tl.describe() + "  (/timeline on|off, show [n], clear)"
+        if words[0] in ("on", "off"):
+            tl.enabled = words[0] == "on"
+            return "timeline " + ("recording" if tl.enabled else "stopped (existing records are kept; /timeline clear deletes them)")
+        if words[0] == "show":
+            rows = tl.recent(int(words[1]) if len(words) > 1 and words[1].isdigit() else 20)
+            return "\n".join(tl.format(r) for r in rows) or "nothing recorded yet"
+        if words[0] == "clear":
+            return f"deleted {tl.clear()} timeline files"
+        return "usage: /timeline | on | off | show [n] | clear"
 
     def calibrate_command(self, words: list[str]) -> str:
         what = words[0] if words else "show"
@@ -336,6 +369,7 @@ class Controller:
         self.controls.stop_gen += 1
         self.drive_mode = False
         log.warning("EMERGENCY STOP (%s) - motors locked, AI paused. /clear to release.", source)
+        self.timeline.record("estop", source=source)
 
     def status_line(self) -> str:
         c = self.controls
@@ -362,6 +396,10 @@ class Controller:
     def manual(self, left: float, right: float, seconds: float, blocking: bool = False) -> str:
         if self.drive.estop.is_set():
             return "E-stop active - /clear first"
+        now = time.monotonic()
+        if now - self._last_manual_event > 2.0:   # a held key sends many moves a second: note the start of each burst
+            self._last_manual_event = now
+            self.timeline.record("manual_move", left=round(left, 2), right=round(right, 2), seconds=round(seconds, 2))
         if blocking:
             threading.Thread(target=self.drive.move, args=(left, right, seconds), daemon=True).start()
         else:
@@ -374,18 +412,22 @@ class Controller:
             return None
         if not line.startswith("/"):
             log.info("YOU  %s", line)
+            self.timeline.record("operator", text=line)
             self.controls.post(line)
             return None if self.controls.auto else "queued for Bob - use /ask to get an answer now"
 
         cmd, _, arg = line[1:].partition(" ")
         arg = arg.strip()
         c = self.controls
+        if cmd.lower() not in ("ask", "tell", "timeline"):   # /ask is recorded below as the message itself
+            self.timeline.record("operator_command", cmd=cmd.lower(), arg=arg or None)
         if cmd.lower() in ("ask", "tell"):
             if not arg:
                 return "usage: /ask <message> - Bob answers now, even while paused"
             if self.drive.estop.is_set():
                 return "E-stop active - /clear first"
             log.info("YOU  %s", arg)
+            self.timeline.record("operator", text=arg)
             c.post(arg)
             if not c.auto:
                 c.step_once.set()
@@ -530,6 +572,22 @@ class Controller:
                 err = self.follower.start(float(word) if word else 30.0)
                 return f"following the nearest face (/follow off to stop; the emergency stop works too)" if err is None \
                     else f"can't follow: {err}"
+            case "find":
+                word = arg.lower().strip()
+                if word in ("off", "stop"):
+                    self.follower.stop()
+                    return "stopping" if self.follower.active else "not looking"
+                if not c.motion_enabled:
+                    return "movement is disabled (/motion on)"
+                err = self.follower.start(float(word) if word else self.cfg.follow.scan_seconds, mode="find")
+                if err is not None:
+                    return f"can't look: {err}"
+                self.background(self._announce_find, self.follower.session)
+                return "turning on the spot to look for a face (/find off to stop; the emergency stop works too)"
+            case "check":
+                return format_report(run_checks(self, BASE))
+            case "timeline":
+                return self.timeline_command(arg.lower().split())
             case "range" | "sensor":
                 words = arg.lower().split()
                 if not self.ranger.available and not words:

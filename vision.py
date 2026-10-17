@@ -92,6 +92,10 @@ class Follower:
         self._detector_factory = detector_factory
         self._detector = None
         self.active = False
+        self.mode = "follow"
+        self.found = False          # find mode: True once a face was seen
+        self.session = 0            # counts every start, so a caller can tell its own session from a later one
+        self.outcomes: dict[int, tuple[bool, str]] = {}   # session -> (found a face, result text); the last few
         self.result = ""
         self.steps = 0
         self._stop = threading.Event()
@@ -99,10 +103,12 @@ class Follower:
         self._why = ""
 
     # ---- operator / brain interface -----------------------------------------------
-    def start(self, seconds: float, allowed=lambda: True) -> str | None:
-        """Begin following. Returns an error message, or None if it started."""
+    def start(self, seconds: float, allowed=lambda: True, mode: str = "follow") -> str | None:
+        """Begin following (or, with mode="find", turning on the spot until a face appears).
+
+        Returns an error message, or None if it started."""
         if self.active:
-            return "already following"
+            return "already following" if self.mode == "follow" else "already looking for someone"
         if self.drive.estop.is_set():
             return "the emergency stop is on"
         try:
@@ -115,8 +121,12 @@ class Follower:
             return "no camera picture (is the camera on?)"
         self._stop.clear()
         self.result = ""
+        self.found = False
+        self.mode = mode
+        self.session += 1
         self.active = True
-        self._thread = threading.Thread(target=self._run, args=(clamp(seconds, 1, self.cfg.max_seconds), allowed),
+        run = self._scan if mode == "find" else self._run
+        self._thread = threading.Thread(target=run, args=(clamp(seconds, 1, self.cfg.max_seconds), allowed),
                                         name="follower", daemon=True)
         self._thread.start()
         return None
@@ -159,6 +169,75 @@ class Follower:
             fwd = 0.0                                  # never close in on something already near
         s = cfg.max_speed
         return clamp((fwd + turn * 0.6) * s, -1, 1), clamp((fwd - turn * 0.6) * s, -1, 1)
+
+    scan_turn_s = 0.4     # find mode: turn this long...
+    scan_look_s = 0.7     # ...then hold still this long to look (the picture is blurred while turning)
+    scan_settle_s = 0.3   # ...ignoring the first part of the hold, while the camera settles
+
+    def _scan(self, seconds: float, allowed) -> None:
+        """Turn slowly on the spot, stopping to look, until a face is seen. Never drives forward."""
+        sid = self.session
+        t0 = self._clock()
+        cycle = self.scan_turn_s + self.scan_look_s
+        why, seen_at, looks = "time ran out", None, 0
+        log.info("FIND started (looking for a face for up to %.0fs)", seconds)
+        try:
+            while True:
+                now = self._clock()
+                if self._stop.is_set():
+                    why = self._why
+                    break
+                if self.drive.estop.is_set():
+                    why = "emergency stop"
+                    break
+                if not allowed():
+                    why = "paused by the operator"
+                    break
+                if now - t0 >= seconds:
+                    break
+                phase = (now - t0) % cycle
+                if phase < self.scan_turn_s:
+                    s = clamp(self.cfg.scan_speed, 0.1, 1.0)
+                    self.drive.start(s, -s, self.period * 1.6)
+                else:
+                    self.drive.stop()
+                    if phase >= self.scan_turn_s + self.scan_settle_s:
+                        frame = self.camera.grab_bgr()
+                        if frame is None:
+                            why = "lost the camera picture"
+                            break
+                        looks += 1
+                        face = self._pick(self._detector.detect(frame), None)
+                        if face is not None:
+                            seen_at, why = face, "found a face"
+                            break
+                self._sleep(max(0.0, self.period - (self._clock() - now)))
+        except Exception as e:
+            log.exception("Find crashed")
+            why = f"error: {e}"
+        finally:
+            self.drive.stop()
+            took = self._clock() - t0
+            self.found = seen_at is not None
+            if self.found:
+                side = (seen_at.cx - 0.5) * 2
+                where = "straight ahead" if abs(side) < 0.2 else f"{abs(side) * 100:.0f}% of the way to the {'right' if side > 0 else 'left'} edge"
+                self.result = f"found someone after {took:.0f}s: their face is {where}"
+            else:
+                self.result = f"looked for {took:.0f}s ({looks} looks) and saw no face; ended: {why}"
+            self.steps = looks
+            self.outcomes[sid] = (self.found, self.result)
+            for old in [k for k in self.outcomes if k <= sid - 5]:
+                del self.outcomes[old]
+            self.active = False
+            log.info("FIND ended: %s", self.result)
+
+    def outcome(self, sid: int, timeout: float) -> tuple[bool, str] | None:
+        """The result of one particular find session (waits for it), unaffected by any session started later."""
+        end = self._clock() + timeout
+        while sid not in self.outcomes and self._clock() < end:
+            self._sleep(0.05)
+        return self.outcomes.get(sid)
 
     def _run(self, seconds: float, allowed) -> None:
         t0 = self._clock()

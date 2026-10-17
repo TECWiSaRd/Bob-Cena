@@ -54,6 +54,8 @@ you, landmarks, people's names, your progress on the goal.
 - If you have a follow_person tool, use it when someone asks you to follow or come with them: a local \
 face tracker then steers you smoothly between your thoughts. It follows faces, so it works while the \
 person faces you, and it ends when they turn away or walk out of view.
+- If you have a find_person tool, use it when you can't see anyone and want company, or when asked to find \
+someone: it turns you on the spot until a face appears, then you greet them.
 - Your wheels are uncalibrated at first. Learn from what you see after a move \
 and save what you learn.
 
@@ -178,6 +180,13 @@ def build_tools(max_move: float, radio_peer: str | None = None, follower=None, m
             "ends: the person is lost, the time runs out, or the operator stops you. Works while the person "
             "faces you. Use it when someone asks you to follow or come with them."
         ), {"seconds": {"type": "number", "description": "how long to follow, 5 to 60"}}))
+    if follower:
+        tools.append(_tool("find_person", (
+            "Turn slowly on the spot, stopping to look, until your face detector sees a face. You never drive "
+            "forward while doing this. Blocks until it finds someone, the time runs out, or the operator stops you. "
+            "When it finds a face, say hello out loud: you haven't spoken yet. Use it when you can't see anyone "
+            "and want to find a person, or when someone asks you to come find them."
+        ), {"seconds": {"type": "number", "description": "how long to look, 5 to 60"}}))
     if radio_peer:
         tools.append(_tool("radio_send", (
             f"Send a short text message (a sentence or two) to {radio_peer}, your little brother robot, "
@@ -343,6 +352,7 @@ class Brain(threading.Thread):
                  drive: Drive, camera: Camera, audio: Audio, radio=None, follower=None, people=None, music=None):
         super().__init__(name="brain", daemon=True)
         self.radio, self.follower, self.music = radio, follower, music
+        self.timeline = None      # set by the controller; records ticks and tool calls when enabled
         self.people = people or People(Path("/dev/null"))
         self.cfg, self.c, self.memory = cfg, controls, memory
         self.drive, self.camera, self.audio = drive, camera, audio
@@ -400,6 +410,11 @@ class Brain(threading.Thread):
         self.c.ticks += 1
         inbox = self.c.take_inbox()
         frame = self.camera.capture_jpeg()
+        if self.timeline and self.timeline.enabled:
+            dist = self.drive.ranger.distance_cm if self.drive.ranger else None
+            self.timeline.record("tick", n=self.c.ticks, picture=self.timeline.thumbnail(frame),
+                                 dist_cm=None if dist is None else round(dist), inbox=len(inbox),
+                                 mode="auto" if self.c.auto else "step")
         content = [_image_block(frame)] if frame else []
         content.append({"type": "text", "text": self._status(inbox, frame is not None)})
         messages = [{"role": "user", "content": content}]
@@ -542,6 +557,9 @@ class Brain(threading.Thread):
             log.exception("Tool %s failed", block.name)
             result, is_error = f"error: {e}", True
         summary = result if isinstance(result, str) else "photo taken"
+        if self.timeline:
+            self.timeline.record("tool", name=block.name, args=str(dict(args))[:200], result=summary, error=is_error or None,
+                                 stop_reason=self.drive.stop_reason or None)
         short_args = ", ".join(f"{k}={v}" for k, v in args.items())
         self.c.actions.append(f"{datetime.now():%H:%M:%S} {block.name}({short_args}) -> {summary[:80]}")
         out = {"type": "tool_result", "tool_use_id": block.id, "content": result}
@@ -623,6 +641,21 @@ class Brain(threading.Thread):
             while self.follower.active and self._allowed():
                 time.sleep(0.1)
             if self.follower.active:  # cancelled while following (pause / emergency stop)
+                self.follower.stop("cancelled by the operator")
+            self.follower.wait(3)
+            return f"{self.follower.result}. {self._range_text()}".strip(), False
+
+        if name == "find_person" and self.follower:
+            if self.drive.estop.is_set():
+                return "BLOCKED: emergency stop is active (operator override). Wait for the operator.", True
+            if not self.c.motion_enabled:
+                return "BLOCKED: the operator has disabled movement for testing.", True
+            err = self.follower.start(float(a.get("seconds", 20)), allowed=self._allowed, mode="find")
+            if err:
+                return f"could not start looking: {err}", True
+            while self.follower.active and self._allowed():
+                time.sleep(0.1)
+            if self.follower.active:
                 self.follower.stop("cancelled by the operator")
             self.follower.wait(3)
             return f"{self.follower.result}. {self._range_text()}".strip(), False

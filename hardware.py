@@ -248,6 +248,7 @@ class Drive:
         self.sim = sim
         self.ranger = ranger        # distance sensor: forward moves stop short of obstacles
         self.stop_reason = ""       # why the last move was refused or cut short by the reflex
+        self.on_event = None        # optional callback(reason) when the reflex refuses or stops a move (the timeline)
         self._forward = False
         self.speed_cap = cfg.max_speed
         self.estop = threading.Event()
@@ -346,6 +347,7 @@ class Drive:
             if forward and (cm := self._obstacle()) is not None:
                 self.stop_reason = f"obstacle {cm:.0f} cm ahead - refused to drive forward"
                 self._halt_locked()
+                self._emit(self.stop_reason)
                 return False
             if seconds <= 0 or (left == 0 and right == 0):
                 self._halt_locked()  # nothing to run: never energize without a deadline to stop at
@@ -397,6 +399,13 @@ class Drive:
                 elif self._moving and self._forward and (cm := self._obstacle()) is not None:
                     self.stop_reason = f"obstacle {cm:.0f} cm ahead - stopped"
                     self._halt_locked()
+                    self._emit(self.stop_reason)
+
+    def _emit(self, reason: str) -> None:
+        """Tell the timeline, from a helper thread so file writing can never delay the wheels."""
+        cb = self.on_event
+        if cb:
+            threading.Thread(target=cb, args=(reason,), daemon=True).start()
 
     def close(self) -> None:
         self._closed = True  # refuse new moves before the hardware goes away

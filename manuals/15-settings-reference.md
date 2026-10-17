@@ -105,6 +105,8 @@ See [Follow me](08-follow-me.md).
 | `lost_after_s` | 3.0 | give up this long after losing the face |
 | `turn_gain` | 0.9 | how strongly he turns toward the person. Lower it if he swings side to side |
 | `forward_gain` | 2.5 | how strongly he closes the distance. Lower it if he lurches |
+| `scan_speed` | 0.35 | `/find` and `find_person`: how fast he turns on the spot while looking for a face |
+| `scan_seconds` | 25.0 | `/find`: how long he looks before giving up |
 | `deadzone` | 0.12 | how far off-centre still counts as "straight ahead" (0 = centre, 1 = edge) |
 
 ## `[audio]`: voice
@@ -176,6 +178,19 @@ See [Sound system](12-sound-system.md).
 | `duck_hold_s` | 0.8 | how long after Bob stops talking the music returns |
 | `mic_deaf_while_playing` | true | the microphone ignores the room while music plays |
 | `poll_seconds` | 1.0 | how often Bob checks what's playing |
+
+## `[timeline]`: event record
+
+See [Memory and people](14-memory-and-people.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | false | record what Bob saw, decided and did in `logs/timeline/`. Live: `/timeline on` |
+| `thumbnails` | true | also keep small camera pictures. **They can show people** |
+| `thumb_every_s` | 10.0 | at most one picture this often |
+| `thumb_width` | 320 | picture width in pixels |
+| `keep_days` | 7.0 | older records are deleted |
+| `max_mb` | 200 | the folder never grows past this; the oldest files go first |
 
 ## `[brain]`: Claude
 

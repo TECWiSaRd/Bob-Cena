@@ -94,6 +94,7 @@ Everything is in the project folder (`~/bob` on the Pi).
 | Let Bob move again after a stop | `/clear`, then `/resume` |
 | Stop him thinking (and spending) | `/pause` |
 | Let him think and act | `/resume` |
+| Check he's healthy | `/check` |
 | Make him talk to you | `/ask hello Bob` |
 | Drive by hand | `/drive`, then W A S D (X to leave) |
 | Cheaper testing | `/model haiku` |

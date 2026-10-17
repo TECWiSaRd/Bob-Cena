@@ -101,6 +101,7 @@ Then put him on the floor and type `/resume`.
 | Bluetooth pairing | only during `/music pair` (2 minutes) | `/music forget` old phones |
 | AirPlay | everyone on your Wi-Fi, by default | `BOB_AIRPLAY_PASSWORD` when installing |
 | The radio | only a robot with the shared secret | `BOB_RADIO_SECRET` |
+| The timeline (if on) | anyone who can log in to the Pi | off by default; `thumbnails = false`; `/timeline clear` |
 | What Claude sees | camera pictures, transcripts, notes, people list | `/camera off`, `/listen off`, `/forget`, `/people clear` |
 
 Keep `.env` private. It holds your API key, which spends your money.

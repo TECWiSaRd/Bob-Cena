@@ -109,7 +109,9 @@ motor battery.
    tmux new -s bob
    .venv/bin/python bob.py --paused
    ```
-4. **Quick check** (wheels off the ground the first time each day): `/fwd 1`, `/left 0.5`, `/say hello`.
+4. **Quick check.** Type `/check` for a one-screen report (anything marked `FAIL` needs fixing; `WARN`
+   deserves a look). Then, with the wheels off the ground the first time each day: `/fwd 1`, `/left 0.5`,
+   `/say hello`.
 5. **Let him go:** put him on the floor, keep a finger near the **Space bar** (emergency stop), and type
    `/resume`.
 6. **Walk away safely:** type `/pause` first, or `/quit` to shut him down. In tmux, `Ctrl-B` then `D`

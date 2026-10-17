@@ -72,6 +72,8 @@ class FollowConfig:
     turn_gain: float = 0.9
     forward_gain: float = 2.5
     deadzone: float = 0.12       # ignore a person this close to the centre line (0 = centre, 1 = frame edge)
+    scan_speed: float = 0.35     # /find and find_person: how fast Bob turns on the spot while looking for a face
+    scan_seconds: float = 25.0   # ... and how long he looks before giving up
 
 
 @dataclass
@@ -134,6 +136,16 @@ class MusicConfig:
 
 
 @dataclass
+class TimelineConfig:
+    enabled: bool = False        # record what Bob saw, decided and did in logs/timeline (see manual 03, /timeline)
+    thumbnails: bool = True      # keep small camera pictures too. They can show people
+    thumb_every_s: float = 10.0  # at most one picture this often
+    thumb_width: int = 320
+    keep_days: float = 7.0       # older records are deleted
+    max_mb: int = 200            # the folder never grows beyond this; the oldest files go first
+
+
+@dataclass
 class BrainConfig:
     model: str = "claude-opus-5-5"
     effort: str = "low"          # low | medium | high - low keeps reactions snappy
@@ -159,6 +171,7 @@ class Config:
     mic: MicConfig = field(default_factory=MicConfig)
     radio: RadioConfig = field(default_factory=RadioConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
+    timeline: TimelineConfig = field(default_factory=TimelineConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 

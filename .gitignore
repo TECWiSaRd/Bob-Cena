@@ -17,3 +17,4 @@ __pycache__/
 
 # Old experiment
 wakewords/hey_bob_old.onnx
+sounds/

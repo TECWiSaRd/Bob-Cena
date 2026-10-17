@@ -32,7 +32,7 @@ img{max-width:100%%;height:auto}p{margin:.5em}</style>
 # Commands the dashboard may run (the first word, without the slash). Anything else is refused:
 # no /quit, /forget, /people clear, /calibrate (it drives the robot for a long time) and so on.
 DASH_COMMANDS = {"estop", "clear", "pause", "hush", "resume", "step", "ask", "motion", "camera", "mute", "unmute",
-                 "follow", "radio", "listen", "range", "speed", "goal", "say", "sound", "talk", "trim", "music"}
+                 "follow", "find", "check", "radio", "listen", "range", "speed", "goal", "say", "sound", "talk", "trim", "music"}
 
 DASH_PAGE = """<!doctype html><html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">

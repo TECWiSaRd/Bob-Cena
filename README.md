@@ -398,6 +398,20 @@ simply told how it went. Everything runs on the Pi.
 - `install.sh` downloads the YuNet face model into `models/`. Without it Bob falls back to OpenCV's older
   built-in detector, which is less reliable.
 
+`/find` makes Bob turn slowly on the spot until he sees a face (he never drives forward doing it), then
+greet them. Claude has the same ability as the `find_person` tool. Tune it with `scan_speed` and
+`scan_seconds` in `[follow]`.
+
+## Checking on Bob
+
+`/check` prints one report: motors, camera (it takes a picture), speaker, microphone, distance sensor,
+stream, API key, music, radio, plus the Pi's temperature, power supply, disk space, memory and Wi-Fi. It
+moves nothing and costs nothing.
+
+`/timeline on` records what Bob saw, decided and did (ticks, tool calls, stop reasons, operator commands)
+to `logs/timeline/`, with small camera pictures. It's off by default, deletes records after `keep_days`, and
+`/timeline clear` wipes it. The pictures can show people. See `[timeline]` in `config.toml`.
+
 ## Remembering people
 
 Claude has a `remember_person` tool (name, how to recognise them, notes) and sees the list every tick, so he

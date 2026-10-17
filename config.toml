@@ -106,6 +106,14 @@ duck_hold_s = 0.8
 mic_deaf_while_playing = true
 poll_seconds = 1.0
 
+[timeline]
+enabled = false            # true = keep a record of what Bob saw, decided and did (logs/timeline)
+thumbnails = true          # ...including small camera pictures (they can show people)
+thumb_every_s = 10.0
+thumb_width = 320
+keep_days = 7.0            # older records are deleted
+max_mb = 200               # the folder never grows beyond this
+
 [brain]
 model = "claude-sonnet-5-5"
 effort = "low"             # low = quicker reactions; medium/high = more careful

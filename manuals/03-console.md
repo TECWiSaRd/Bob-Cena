@@ -102,6 +102,15 @@ it, so the wheels stop shortly after you let go.
 
 Commands start with `/`. Type `/help` in the console for a short list.
 
+### Checking on Bob
+
+| Command | What it does |
+|---|---|
+| `/check` | one report on whether he's ready: motors, camera (takes a picture), speaker, microphone, distance sensor, stream, Claude key, music, radio, **temperature, power supply, disk space, memory and Wi-Fi**. Each line is `ok`, `WARN`, `FAIL` or `off`. It moves nothing and costs nothing |
+| `/timeline` | the event record (below). `/timeline on`, `off`, `show 20`, `clear` |
+
+Run `/check` first whenever you start Bob, and whenever something seems wrong.
+
 ### Stopping and pausing
 
 | Command | What it does |
@@ -152,6 +161,7 @@ Details: [The brain](04-brain-and-claude.md).
 | `/follow [seconds]` | follows the nearest face (default 30 s) |
 | `/follow off` | stops following |
 | `/range` (or `/sensor`) | distance sensor reading. Also `/range stop 25` (stop distance in cm) and `/range off`/`on` (the reflex) |
+| `/find [seconds]` | turns slowly on the spot until he sees a face, then says "There you are!". `/find off` stops. See [Follow me](08-follow-me.md) |
 | `/calibrate turn` / `straight` / `show` / `cancel` | Bob measures his own turning and drift. Add `go` to actually start |
 
 Details: [Camera](07-camera-stream-and-dashboard.md), [Follow me](08-follow-me.md),

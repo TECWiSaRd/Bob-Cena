@@ -23,6 +23,22 @@ Bob can follow a person around: he turns to face them and keeps about a metre aw
 noise would be transcribed as nonsense), so while he's driving he probably won't hear "stop". Use the
 console, the dashboard or a physical stop button.
 
+## Find me: looking for someone
+
+`/find` (or Claude's `find_person` tool) is for when nobody is in view. Bob turns **on the spot**, a short
+step at a time, stopping to look after each one (the picture blurs while he turns), until the face detector
+sees a face. He never drives forward while doing this. Then he stops and says "There you are!" (when Claude
+uses the tool, Claude greets the person himself).
+
+| Setting (`[follow]`) | Default | Meaning |
+|---|---|---|
+| `scan_speed` | 0.35 | how fast he turns: lower is slower and steadier |
+| `scan_seconds` | 25 | how long `/find` looks before giving up (Claude chooses his own time, 5-60 s) |
+
+He gives up after the time runs out and says no one was found. Space, `/estop`, `/pause` and `/find off` all
+stop it at once. It uses the same face detector as following, so it needs the camera on. How far one look-and-turn
+step moves him depends on your motors and floor, so watch the first run and adjust `scan_speed`.
+
 ## How it works
 
 Claude only thinks every few seconds, which is far too slow to follow someone smoothly. So during a

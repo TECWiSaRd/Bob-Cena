@@ -67,6 +67,35 @@ so it's a friendly guess, not face recognition.
 
 ---
 
+## The event timeline (for reviewing what happened)
+
+This isn't memory Bob uses. It's a record **for you**, so you can see afterwards what he saw, decided and
+did: useful for tuning, and for working out what went wrong after an incident. It's **off by default**.
+
+Turn it on with `/timeline on` (or `enabled = true` under `[timeline]`). While on, it writes:
+- **`logs/timeline/YYYY-MM-DD.jsonl`**: one line per event. `tick` (a thinking round, with the distance
+  reading), `tool` (what Claude asked for, the result, and why a move stopped), `operator` (messages and `/ask`),
+  `operator_command` (every other `/command` you or the dashboard run: `/pause`, `/motion off`, `/speed`, `/fwd`,
+  `/find` and so on), `manual_move` (the start of each burst of hand-driving with the keys or the dashboard pad),
+  `stop` (the obstacle reflex), `estop` (an emergency stop and its source).
+- **`logs/timeline/thumbs/`**: small pictures, at most one every 10 s, named by time. Each `tick` line
+  names the matching picture.
+
+| Command | Effect |
+|---|---|
+| `/timeline` | status: events recorded, space used, how long it's kept |
+| `/timeline show 20` | the last 20 events |
+| `/timeline on` / `off` | start or stop recording (existing records stay) |
+| `/timeline clear` | **deletes every record and picture** |
+
+Records older than `keep_days` (7) are deleted automatically, and the folder never grows past `max_mb`
+(200). Everything stays on the Pi. To copy it to your computer:
+`rsync -av adam@bob:~/bob/logs/timeline/ ~/Desktop/bob-timeline/`.
+
+**Privacy:** the pictures can show people and your home. Tell people nearby, set `thumbnails = false` if
+you only want the text record, and use `/timeline clear` when you're done. `/people clear` does not delete
+timeline pictures.
+
 ## Privacy
 
 - The notes and people files exist **only on the Pi**. Copying code from your Mac never overwrites them.
@@ -90,6 +119,7 @@ Restart Bob after restoring.
 | `logs/bob.log` | the full log (2 MB per file; the current file plus 5 older ones are kept) | yes |
 | `logs/radio.jsonl` | every radio message | yes |
 | `captures/` | photos from `/snap` | yes |
+| `logs/timeline/` | the event timeline, if turned on | yes |
 | `music_duck.json` | the music volume if Bob crashed while ducking | appears and disappears by itself |
 | `wakeword_clips/` | your recordings from `wakeword_tools.py` | yes |
 

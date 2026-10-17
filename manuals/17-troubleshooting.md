@@ -4,6 +4,8 @@ Problems and fixes, grouped by area. Most of these came up while Bob was being b
 Each part's own manual has more detail.
 
 **First moves for almost any problem:**
+0. **Type `/check`.** It tests the camera, motors, speaker, microphone, power supply, temperature, disk and
+   Wi-Fi in one go, and names what's wrong.
 1. **Read the log.** Scroll up in the console (Page Up), or `tail -50 ~/bob/logs/bob.log`. Bob explains most
    failures in plain words, in yellow (warnings) or red (errors).
 2. **Check the status bar.** `E-STOP`, `PAUSED`, `motion OFF`, `camera OFF`, `audio MUTED` and `SIM` explain
