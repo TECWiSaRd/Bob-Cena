@@ -94,7 +94,7 @@ channel = 3
 ai_max_per_minute = 6      # cap on messages Claude may send per minute
 
 [music]
-enabled = false            # Bluetooth speaker + AirPlay receiver; run ./install_music.sh on the Pi first
+enabled = true             # Bluetooth speaker + AirPlay receiver; run ./install_music.sh on the Pi first
 bluetooth = true
 airplay = true
 airplay_bus = "session"
@@ -107,7 +107,7 @@ mic_deaf_while_playing = true
 poll_seconds = 1.0
 
 [brain]
-model = "claude-opus-5-5"
+model = "claude-sonnet-5-5"
 effort = "low"             # low = quicker reactions; medium/high = more careful
 tick_seconds = 2.0
 max_steps_per_tick = 8
