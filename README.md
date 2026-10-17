@@ -600,3 +600,11 @@ The startup log should say `Speech engine: piper`. Test it with `/say hello`.
 - **Other voices:** list them with `.venv/bin/python -m piper.download_voices`.
 - **A voice file elsewhere:** set `piper_model` to the path of a `.onnx` file.
 - **Back to espeak-ng:** set `tts = "espeak-ng"`.
+
+# Built With
+![Claude Code](https://img.shields.io/badge/Claude%20Code-%23D97757.svg?style=for-the-badge&logo=claudecode&logoColor=white) 
+![Claude](https://img.shields.io/badge/claude-%23D97757.svg?style=for-the-badge&logo=claude&logoColor=white)
+![Tinkercad](https://img.shields.io/badge/Tinkercad-%231477D1.svg?style=for-the-badge&logo=tinkercad&logoColor=white)
+![Raspberry Pi](https://img.shields.io/badge/Raspberry_Pi-1000?style=for-the-badge&logo=raspberrypi&logoColor=ffffff&labelColor=A22846&color=a22946)
+![Google Colab](https://img.shields.io/badge/Google%20Colab-%23F9A825.svg?style=for-the-badge&logo=googlecolab&logoColor=black)
+![OpenCV](https://img.shields.io/badge/opencv-%23fff.svg?style=for-the-badge&logo=opencv&logoColor=black)
