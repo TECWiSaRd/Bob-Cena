@@ -172,6 +172,15 @@ def run_checks(ctrl, base: Path, run=_run, read=_read, which=shutil.which) -> li
     else:
         add(OFF, "wi-fi", "not readable here (wired, or not a Pi)")
 
+    ix = getattr(ctrl, "index", None)
+    if ix is not None:
+        if not ix.enabled:
+            add(OFF, "search index", "off")
+        elif ix.last_error:
+            add(WARN, "search index", f"problem: {ix.last_error}")
+        else:
+            add(OK, "search index", ix.status().removeprefix("search index: "))
+
     tl = getattr(ctrl, "timeline", None)
     if tl is not None:
         add(OK if tl.enabled else OFF, "timeline", tl.describe())

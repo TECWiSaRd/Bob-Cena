@@ -33,6 +33,7 @@ from vision import FaceDetector, Follower
 from stream import StreamServer
 from selfcheck import format_report, run_checks
 from timeline import Timeline
+from index import Index
 
 BASE = Path(__file__).resolve().parent
 log = logging.getLogger("bob")
@@ -63,6 +64,8 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /find [seconds]       turn slowly on the spot until a face is seen, then say so (/find off stops)
   /check                one report: camera, motors, audio, mic, stream, sensor, temperature, power, Wi-Fi, disk
   /timeline             record what Bob saw and did (on|off, show [n], clear)
+  /search WORDS         search everything Bob has recorded: /search lens covered kind:estop since:2d
+  /index                the search index: status, sync, rebuild, ai on|off (may Claude search his history?)
   /range                distance sensor reading; also: on|off, stop <cm>
   /talk (or Tab)        push-to-talk: press to start recording, again to send
   /say TEXT             speak through the speaker
@@ -147,13 +150,15 @@ class Controller:
                                  lambda: FaceDetector(BASE / "models"))
         self.timeline = Timeline(cfg.timeline, BASE / "logs" / "timeline")
         self._last_manual_event = float("-inf")
+        self.index = Index(cfg.index, BASE)
         self.drive.on_event = lambda why: self.timeline.record("stop", reason=why)
         self.controls = Controls(cfg.brain.goal, auto=not (paused or cfg.brain.start_paused))
         self.controls.calibration = self.calibration
+        self.controls.recall_ai = cfg.index.ai
         self.controls.speed_cap = lambda: self.drive.speed_cap
         self.memory = Memory(BASE / "memory.json")
         self.people = People(BASE / "people.json")
-        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music)
+        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index)
         self.brain.timeline = self.timeline
 
     def _make_radio(self, rc):
@@ -191,6 +196,7 @@ class Controller:
             except OSError as e:
                 log.warning("Camera stream not started (%s)", e)
                 self.stream = None
+        self.index.start()
         self.brain.start()
         self.listener.start()
         if self.music:
@@ -239,6 +245,31 @@ class Controller:
             self.audio.play("chirp")
             self.audio.say("There you are!")
 
+    def search_command(self, query: str) -> str:
+        if not self.index.enabled:
+            return "the search index is off: set [index] enabled = true in config.toml"
+        if not query.strip():
+            return ("usage: /search WORDS [kind:estop] [source:timeline|note|person|radio|log|manual] [since:2h|3d|today|2026-10-16]\n"
+                    "  e.g. /search lens covered  |  /search kind:estop since:yesterday  |  /search calibrate source:manual")
+        try:
+            hits = self.index.search(query, 20)
+        except ValueError as e:
+            return str(e)
+        return "\n".join(self.index.format_hit(h) for h in reversed(hits)) or "nothing found"
+
+    def index_command(self, words: list[str]) -> str:
+        if not words:
+            return self.index.status() + "  (/search WORDS; /index sync|rebuild|ai on|off)"
+        if words[0] == "sync":
+            self.index.sync()
+            return self.index.status()
+        if words[0] == "rebuild":
+            return self.index.rebuild()
+        if words[0] == "ai" and len(words) == 2 and words[1] in ("on", "off"):
+            self.controls.recall_ai = words[1] == "on"
+            return f"Bob {'may' if self.controls.recall_ai else 'may NOT'} search his history"
+        return "usage: /index | sync | rebuild | ai on|off"
+
     def timeline_command(self, words: list[str]) -> str:
         tl = self.timeline
         if not words:
@@ -250,7 +281,9 @@ class Controller:
             rows = tl.recent(int(words[1]) if len(words) > 1 and words[1].isdigit() else 20)
             return "\n".join(tl.format(r) for r in rows) or "nothing recorded yet"
         if words[0] == "clear":
-            return f"deleted {tl.clear()} timeline files"
+            removed = tl.clear()
+            self.index.forget("timeline")
+            return f"deleted {removed} timeline files and their search records"
         return "usage: /timeline | on | off | show [n] | clear"
 
     def calibrate_command(self, words: list[str]) -> str:
@@ -346,6 +379,7 @@ class Controller:
         if self.music:
             self.music.stop()     # puts the music volume back if it was ducked
         self.listener.stop()
+        self.index.stop()
         if self.radio:
             self.radio.stop()
             if self.radio.is_alive():
@@ -419,7 +453,7 @@ class Controller:
         cmd, _, arg = line[1:].partition(" ")
         arg = arg.strip()
         c = self.controls
-        if cmd.lower() not in ("ask", "tell", "timeline"):   # /ask is recorded below as the message itself
+        if cmd.lower() not in ("ask", "tell", "timeline", "search", "index"):   # /ask is recorded below; the rest would record themselves
             self.timeline.record("operator_command", cmd=cmd.lower(), arg=arg or None)
         if cmd.lower() in ("ask", "tell"):
             if not arg:
@@ -588,6 +622,10 @@ class Controller:
                 return format_report(run_checks(self, BASE))
             case "timeline":
                 return self.timeline_command(arg.lower().split())
+            case "search":
+                return self.search_command(arg)
+            case "index":
+                return self.index_command(arg.lower().split())
             case "range" | "sensor":
                 words = arg.lower().split()
                 if not self.ranger.available and not words:
@@ -639,14 +677,18 @@ class Controller:
             case "people":
                 words = arg.split(None, 1)
                 if words and words[0].lower() == "forget" and len(words) == 2:
-                    return f"forgot {words[1]}" if self.people.forget(words[1]) else f"I don't know a {words[1]}"
+                    done = self.people.forget(words[1])
+                    self.index.sync()
+                    return f"forgot {words[1]}" if done else f"I don't know a {words[1]}"
                 if words and words[0].lower() == "clear":
                     for n in list(self.people.people):
                         self.people.forget(n)
+                    self.index.sync()
                     return "forgot everyone"
                 return "\n".join(self.people.lines()) or "Bob doesn't know anybody yet (/people forget <name>, /people clear)"
             case "forget":
                 self.memory.clear()
+                self.index.sync()
                 return "notes wiped"
             case "effort":
                 if arg not in ("low", "medium", "high", "xhigh", "max"):

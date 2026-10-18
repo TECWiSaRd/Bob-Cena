@@ -22,6 +22,9 @@ Everything is in the project folder (`~/bob` on the Pi).
 | `radio.py` | the link to John | [13](13-radio-to-john.md) |
 | `stream.py` | the video page and phone dashboard | [07](07-camera-stream-and-dashboard.md) |
 | `console.py` | the text screen | [03](03-console.md) |
+| `selfcheck.py` | the `/check` report | [03](03-console.md) |
+| `timeline.py`, `index.py` | the event record and its search index | [14](14-memory-and-people.md) |
+| `tests/` | automatic checks for the safety-critical code | the README, "Tests" |
 | `config.py`, `config.toml` | settings and their defaults | [15](15-settings-reference.md) |
 | `install.sh` | installs everything on the Pi | [02](02-installing-and-updating.md) |
 | `bob.service` | starts Bob at boot | [02](02-installing-and-updating.md) |
@@ -69,6 +72,7 @@ Everything is in the project folder (`~/bob` on the Pi).
 | **BlueZ** | Bluetooth on Linux | https://github.com/bluez/bluez |
 | **shairport-sync** | the AirPlay receiver | https://github.com/mikebrady/shairport-sync |
 | **Tailscale** | the fixed `bob` name from anywhere | https://tailscale.com/kb |
+| **SQLite full-text search** | the search index | https://www.sqlite.org/fts5.html |
 | **Google Colab** | free computer for training a wake word | https://colab.research.google.com |
 
 ---
@@ -99,6 +103,7 @@ Everything is in the project folder (`~/bob` on the Pi).
 | Drive by hand | `/drive`, then W A S D (X to leave) |
 | Cheaper testing | `/model haiku` |
 | See what he remembers | `/notes`, `/people` |
+| Find anything he recorded | `/search lens covered` |
 | Turn the camera off | `/camera off` |
 | Silence him | `/mute` |
 | Shut down | `/quit` |

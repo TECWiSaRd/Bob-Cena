@@ -67,6 +67,7 @@ sensor, and so on. If you've switched something off (motion, the speaker, the ca
 | `remember_person` | save someone's name, how to recognise them, and notes | 30 people |
 | `follow_person` | follow the nearest face for a while | 5-60 s, see [Follow me](08-follow-me.md) |
 | `find_person` | turn on the spot until a face is seen | 5-60 s, never drives forward, see [Follow me](08-follow-me.md) |
+| `recall` | search his own past timeline and radio records | only when `/index ai on`; five short lines at most |
 | `music` | pause, play, skip or change the volume of music someone is streaming | only when music is on; volume capped |
 | `radio_send` | send a message to John | only when the radio is on; 6 a minute |
 

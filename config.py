@@ -146,6 +146,17 @@ class TimelineConfig:
 
 
 @dataclass
+class IndexConfig:
+    enabled: bool = True         # a searchable index of the timeline, notes, people, radio, warnings and manuals (/search)
+    interval_s: float = 5.0      # how often it reads new records
+    keep_days: float = 30.0      # radio and warning records older than this are dropped (the timeline has its own limit)
+    log_warnings: bool = True    # include WARNING and ERROR lines from logs/bob.log
+    manuals: bool = True         # include the manuals and README
+    max_rows: int = 200000       # a safety net on the size of the index
+    ai: bool = False             # let Claude search past timeline and radio records (the recall tool). Live: /index ai on
+
+
+@dataclass
 class BrainConfig:
     model: str = "claude-opus-5-5"
     effort: str = "low"          # low | medium | high - low keeps reactions snappy
@@ -172,6 +183,7 @@ class Config:
     radio: RadioConfig = field(default_factory=RadioConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
+    index: IndexConfig = field(default_factory=IndexConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 

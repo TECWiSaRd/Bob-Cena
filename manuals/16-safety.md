@@ -101,6 +101,8 @@ Then put him on the floor and type `/resume`.
 | Bluetooth pairing | only during `/music pair` (2 minutes) | `/music forget` old phones |
 | AirPlay | everyone on your Wi-Fi, by default | `BOB_AIRPLAY_PASSWORD` when installing |
 | The radio | only a robot with the shared secret | `BOB_RADIO_SECRET` |
+| The search index | anyone who can log in to the Pi | it holds copies of notes, people and timeline text; it follows deletions; `enabled = false` turns it off |
+| Claude searching his history | only if `/index ai on` | off by default; timeline and radio records only, shown to him as data |
 | The timeline (if on) | anyone who can log in to the Pi | off by default; `thumbnails = false`; `/timeline clear` |
 | What Claude sees | camera pictures, transcripts, notes, people list | `/camera off`, `/listen off`, `/forget`, `/people clear` |
 

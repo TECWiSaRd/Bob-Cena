@@ -236,6 +236,19 @@ class OperatorCommands(unittest.TestCase):
         self.assertEqual([r["text"] for r in self.events("operator")], ["hello"])
         self.assertEqual(self.events("operator_command"), [])
 
+    def test_search_and_timeline_clear_through_the_console(self):
+        self.ctrl.index = __import__("index").Index(config.IndexConfig(), Path(self.d.name))
+        self.ctrl.timeline.dir = Path(self.d.name) / "logs" / "timeline"
+        self.ctrl.index.timeline_dir = self.ctrl.timeline.dir
+        self.ctrl.handle("/speed 0.4")
+        self.assertIn("speed", self.ctrl.handle("/search kind:operator_command"))
+        self.assertIn("deleted", self.ctrl.handle("/timeline clear"))
+        self.assertEqual(self.ctrl.handle("/search kind:operator_command"), "nothing found")
+        self.assertIn("usage", self.ctrl.handle("/search"))
+        self.assertIn("since", self.ctrl.handle("/search x since:someday"))
+        self.assertIn("may NOT", self.ctrl.handle("/index ai off"))
+        self.assertTrue(self.ctrl.controls.recall_ai is False)
+
     def test_held_keys_are_one_event_per_burst(self):
         for _ in range(20):
             self.ctrl.manual(0.5, 0.5, 0.1)

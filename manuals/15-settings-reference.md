@@ -192,6 +192,20 @@ See [Memory and people](14-memory-and-people.md).
 | `keep_days` | 7.0 | older records are deleted |
 | `max_mb` | 200 | the folder never grows past this; the oldest files go first |
 
+## `[index]`: search index
+
+See [Memory and people](14-memory-and-people.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | true | keep a searchable index (`logs/index.db`) of the timeline, notes, people, radio, warnings and manuals |
+| `interval_s` | 5.0 | how often it reads new records |
+| `keep_days` | 30.0 | radio and warning records older than this are dropped from the index |
+| `log_warnings` | true | include WARNING and ERROR lines from `logs/bob.log` |
+| `manuals` | true | include the manuals and README (so `/search` can answer "how do I...") |
+| `max_rows` | 200000 | a safety net on the index's size; the oldest history goes first |
+| `ai` | false | let Claude search past timeline and radio records (`recall`). Live: `/index ai on` |
+
 ## `[brain]`: Claude
 
 See [The brain](04-brain-and-claude.md).

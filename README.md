@@ -412,6 +412,11 @@ moves nothing and costs nothing.
 to `logs/timeline/`, with small camera pictures. It's off by default, deletes records after `keep_days`, and
 `/timeline clear` wipes it. The pictures can show people. See `[timeline]` in `config.toml`.
 
+`/search WORDS` searches everything Bob has recorded (timeline, notes, people, radio, warnings, the manuals)
+through a small SQLite index in `logs/index.db`, for example `/search kind:estop since:yesterday`. It reads
+only new records, follows deletions (`/timeline clear` removes the matching rows), and can be rebuilt any
+time with `/index rebuild`. With `/index ai on`, Claude can search his own past too (off by default).
+
 ## Remembering people
 
 Claude has a `remember_person` tool (name, how to recognise them, notes) and sees the list every tick, so he

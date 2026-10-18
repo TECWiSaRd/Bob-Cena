@@ -108,6 +108,8 @@ Commands start with `/`. Type `/help` in the console for a short list.
 |---|---|
 | `/check` | one report on whether he's ready: motors, camera (takes a picture), speaker, microphone, distance sensor, stream, Claude key, music, radio, **temperature, power supply, disk space, memory and Wi-Fi**. Each line is `ok`, `WARN`, `FAIL` or `off`. It moves nothing and costs nothing |
 | `/timeline` | the event record (below). `/timeline on`, `off`, `show 20`, `clear` |
+| `/search WORDS` | finds anything Bob has recorded: `/search lens covered`, `/search kind:estop since:2d`. See [Memory and people](14-memory-and-people.md) |
+| `/index` | the search index: status, `sync`, `rebuild`, `ai on`/`off` (may Claude search his history?) |
 
 Run `/check` first whenever you start Bob, and whenever something seems wrong.
 

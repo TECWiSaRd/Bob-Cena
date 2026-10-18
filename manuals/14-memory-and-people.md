@@ -96,6 +96,62 @@ Records older than `keep_days` (7) are deleted automatically, and the folder nev
 you only want the text record, and use `/timeline clear` when you're done. `/people clear` does not delete
 timeline pictures.
 
+## Searching everything: the index
+
+As the timeline and notes grow, scrolling gets slow. Bob keeps a **search index** (`logs/index.db`, one
+SQLite file) so you can find things in seconds. The index is only a *copy* made for searching. The real
+records stay in their own files, and if the index is ever damaged Bob deletes it and builds it again by himself.
+
+**What's in it**
+
+| Source (`source:`) | What | Kept |
+|---|---|---|
+| `timeline` | the event timeline | as long as the timeline files exist |
+| `note` | Bob's notes | follows `memory.json` |
+| `person` | people he knows | follows `people.json` |
+| `radio` | messages with John | `[index] keep_days` (30) |
+| `log` | WARNING and ERROR lines from the log | `[index] keep_days` (30) |
+| `manual` | these manuals and the README | follows the files |
+
+**Searching** (from the console, not the dashboard):
+
+```
+/search lens covered
+/search kind:estop since:yesterday
+/search calibrate source:manual
+/search red cap source:person
+```
+
+- Every word you type must match (as the start of a word, and plural/singular forms match: "cover" finds
+  "covered").
+- Filters: `kind:` (an event type such as `estop`, `tool`, `tick`, `operator_command`), `source:` (the table
+  above), `since:` (`30m`, `2h`, `3d`, `today`, `yesterday`, or `2026-10-16`).
+- Up to 20 results, newest at the bottom. Hits with a camera picture show its file name, in
+  `logs/timeline/thumbs/` (`[picture deleted]` if the cleanup already removed it).
+- With no words, `/search kind:estop` just lists the latest of that kind.
+
+**Keeping up:** a background thread reads only what's *new* in each file, every 5 seconds, so it stays fast
+however big the history gets. Nothing slows Bob's thinking.
+
+**Privacy:** the index follows the records it copies. When the timeline deletes an old day, those rows go too.
+`/timeline clear` removes them immediately. `/forget` and `/people forget` or `clear` update the index within
+moments. A damaged or unwanted index can be deleted with `/index rebuild` (or by removing `logs/index.db`).
+
+**Letting Claude search too (off by default).** With `/index ai on` (or `[index] ai = true`), Claude gets a
+`recall` tool for his own past: *what happened last time I went down the hallway?* It can search only the
+**timeline and radio** records (not the log or manuals, and notes and people are already in every status
+report). He gets at most five short lines, which are marked as old data and never as instructions. `/index ai
+off` takes it away again. Turn it on only if you're comfortable with timeline text (including words he heard)
+coming back into his prompts.
+
+| Command | Effect |
+|---|---|
+| `/search WORDS [kind:x] [source:x] [since:x]` | search |
+| `/index` | what's indexed, its size, and when it last updated |
+| `/index sync` | update it now |
+| `/index rebuild` | delete it and build it again from the files |
+| `/index ai on` / `off` | allow or forbid Claude's `recall` tool |
+
 ## Privacy
 
 - The notes and people files exist **only on the Pi**. Copying code from your Mac never overwrites them.
@@ -120,6 +176,7 @@ Restart Bob after restoring.
 | `logs/radio.jsonl` | every radio message | yes |
 | `captures/` | photos from `/snap` | yes |
 | `logs/timeline/` | the event timeline, if turned on | yes |
+| `logs/index.db` (and `-wal`, `-shm`) | the search index | yes: Bob rebuilds it |
 | `music_duck.json` | the music volume if Bob crashed while ducking | appears and disappears by itself |
 | `wakeword_clips/` | your recordings from `wakeword_tools.py` | yes |
 
@@ -131,4 +188,7 @@ Restart Bob after restoring.
 | Bob forgot a conversation | recent conversation resets when Bob restarts; only notes and people last |
 | He calls someone by the wrong name | correct him out loud; or `/people forget <name>` |
 | Log: `memory.json is damaged` | a power cut corrupted it. Bob started with no notes and kept the old file as `memory.json.bad` |
+| `/search` finds nothing you expect | `/index` shows what's in it. `/index rebuild` builds it again. The timeline only has records if it was on (`/timeline`) |
+| `/search` says `I don't understand since:...` | use `30m`, `2h`, `3d`, `today`, `yesterday` or `2026-10-16` |
+| Log: `search index damaged ... rebuilding it` | harmless: it was deleted and rebuilt from the real files |
 | `/people` says nobody yet | he only saves people when they introduce themselves |

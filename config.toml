@@ -114,6 +114,15 @@ thumb_width = 320
 keep_days = 7.0            # older records are deleted
 max_mb = 200               # the folder never grows beyond this
 
+[index]
+enabled = true             # a searchable index of the timeline, notes, people, radio, warnings and manuals (/search)
+interval_s = 5.0
+keep_days = 30.0           # radio and warning records older than this are dropped
+log_warnings = true
+manuals = true
+max_rows = 200000
+ai = false                 # true = Claude may search past timeline and radio records (the recall tool)
+
 [brain]
 model = "claude-sonnet-5-5"
 effort = "low"             # low = quicker reactions; medium/high = more careful
