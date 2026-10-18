@@ -108,6 +108,10 @@ Commands start with `/`. Type `/help` in the console for a short list.
 |---|---|
 | `/check` | one report on whether he's ready: motors, camera (takes a picture), speaker, microphone, distance sensor, stream, Claude key, music, radio, **temperature, power supply, disk space, memory and Wi-Fi**. Each line is `ok`, `WARN`, `FAIL` or `off`. It moves nothing and costs nothing |
 | `/timeline` | the event record (below). `/timeline on`, `off`, `show 20`, `clear` |
+| `/home` | the lights in Bob's room through Home Assistant: `/home on 40`, `/home off`, `/home check`, `/home ai off`. See [Home Assistant](19-home-assistant.md) |
+| `/locate [seconds]` | Bob turns slowly on the spot until he sees a room tag, then says which room he's in. `/locate off` stops. It moves him, so it obeys `/motion off` and the emergency stop |
+| `/tags` | shows which room tags the camera can see right now (use it to test where a tag works) |
+| `/where [room]` | which room Bob thinks he's in; `/where kitchen` tells him, `/where clear` goes back to automatic |
 | `/search WORDS` | finds anything Bob has recorded: `/search lens covered`, `/search kind:estop since:2d`. See [Memory and people](14-memory-and-people.md) |
 | `/index` | the search index: status, `sync`, `rebuild`, `ai on`/`off` (may Claude search his history?) |
 

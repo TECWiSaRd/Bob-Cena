@@ -172,6 +172,11 @@ def run_checks(ctrl, base: Path, run=_run, read=_read, which=shutil.which) -> li
     else:
         add(OFF, "wi-fi", "not readable here (wired, or not a Pi)")
 
+    home = getattr(ctrl, "home", None)
+    if home is not None:
+        level, detail = home.check()
+        add(level, "home assistant", detail)
+
     ix = getattr(ctrl, "index", None)
     if ix is not None:
         if not ix.enabled:

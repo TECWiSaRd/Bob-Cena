@@ -146,6 +146,29 @@ class TimelineConfig:
 
 
 @dataclass
+class HomeConfig:
+    enabled: bool = False        # let Bob turn the lights in his room on and off through Home Assistant (needs HA_TOKEN in .env)
+    url: str = "http://homeassistant.local:8123"   # your Home Assistant, e.g. "http://192.168.1.20:8123"
+    rooms: list = field(default_factory=list)      # the Home Assistant areas Bob may control, e.g. ["Kitchen", "Living Room"]
+    location_entity: str = ""    # a sensor whose state is the room Bob is in, e.g. "sensor.bob_area" (Bluetooth room tracking in HA)
+    quiet_start: str = "22:00"   # between these times Bob may not turn lights ON (off is fine). Empty = no quiet hours
+    quiet_end: str = "07:00"
+    max_per_minute: int = 6      # most light changes Claude may make in a minute
+    cooldown_s: float = 30.0     # least time between changes to the same room's lights, so he can't flicker them
+    dark_below: float = 40.0     # camera brightness (0-255) under this counts as "dark"
+    bright_above: float = 90.0   # ...and over this as "bright"; in between is "dim"
+    # Room tags: printed AprilTags by each door that tell Bob which room he is in (see manual 19)
+    tags: dict = field(default_factory=dict)   # tag number -> room, for example { 1 = "Kitchen", 2 = "Living Room" }
+    tag_family: str = "tag36h11" # "tag36h11" (the standard AprilTag), "tag25h9" or "aruco4x4_50"
+    tag_min_px: float = 40.0     # a tag must look at least this wide (pixels) to be believed: close to it, not seen through a door
+    tag_valid_s: float = 300.0   # a sighting is trusted for this long
+    tag_max_move_s: float = 20.0 # ...and until the wheels have run this many seconds since it (he can't feel leaving a room)
+    tag_scan_hz: float = 3.0     # how often the camera is checked for tags
+    tag_search_speed: float = 0.35   # /locate and find_my_room: how fast Bob turns on the spot looking for a tag
+    tag_search_seconds: float = 25.0 # ...and how long he looks before giving up
+
+
+@dataclass
 class IndexConfig:
     enabled: bool = True         # a searchable index of the timeline, notes, people, radio, warnings and manuals (/search)
     interval_s: float = 5.0      # how often it reads new records
@@ -184,6 +207,7 @@ class Config:
     music: MusicConfig = field(default_factory=MusicConfig)
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
     index: IndexConfig = field(default_factory=IndexConfig)
+    home: HomeConfig = field(default_factory=HomeConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 
@@ -199,6 +223,7 @@ CHOICES = {
     ("mic", "wake_engine"): ("openwakeword", "text", "off"),
     ("radio", "role"): ("listen", "connect"),
     ("music", "airplay_bus"): ("session", "system"),
+    ("home", "tag_family"): ("tag36h11", "tag25h9", "aruco4x4_50"),
     ("brain", "effort"): ("low", "medium", "high", "xhigh", "max"),
 }
 

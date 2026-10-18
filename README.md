@@ -417,6 +417,16 @@ through a small SQLite index in `logs/index.db`, for example `/search kind:estop
 only new records, follows deletions (`/timeline clear` removes the matching rows), and can be rebuilt any
 time with `/index rebuild`. With `/index ai on`, Claude can search his own past too (off by default).
 
+## Home Assistant (lights)
+
+With Home Assistant on your network, Bob can turn the lights on or off in the room he's in, for example when
+it's too dark to see. It's limited on purpose: lights only, only the areas you list, only the room he's in,
+with quiet hours (no turning lights on 22:00-07:00 by default), a cooldown and a rate limit. He learns his
+room from a printed AprilTag by each door (`tag_tools.py` makes them; `/tags` tests them), from a Home
+Assistant room sensor (Bluetooth room tracking), or from `/where kitchen`. `/locate` makes him turn slowly
+on the spot until he sees a room tag, and Claude can do the same with the `find_my_room` tool. Set `HA_TOKEN` in
+`.env` and fill in `[home]` in `config.toml`. See `manuals/19-home-assistant.md`.
+
 ## Remembering people
 
 Claude has a `remember_person` tool (name, how to recognise them, notes) and sees the list every tick, so he

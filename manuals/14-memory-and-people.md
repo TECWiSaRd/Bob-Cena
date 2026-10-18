@@ -77,7 +77,8 @@ Turn it on with `/timeline on` (or `enabled = true` under `[timeline]`). While o
   reading), `tool` (what Claude asked for, the result, and why a move stopped), `operator` (messages and `/ask`),
   `operator_command` (every other `/command` you or the dashboard run: `/pause`, `/motion off`, `/speed`, `/fwd`,
   `/find` and so on), `manual_move` (the start of each burst of hand-driving with the keys or the dashboard pad),
-  `stop` (the obstacle reflex), `estop` (an emergency stop and its source).
+  `stop` (the obstacle reflex), `estop` (an emergency stop and its source), `home` (a light change: who
+  asked, which room, how many lights).
 - **`logs/timeline/thumbs/`**: small pictures, at most one every 10 s, named by time. Each `tick` line
   names the matching picture.
 

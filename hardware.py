@@ -249,6 +249,8 @@ class Drive:
         self.ranger = ranger        # distance sensor: forward moves stop short of obstacles
         self.stop_reason = ""       # why the last move was refused or cut short by the reflex
         self.on_event = None        # optional callback(reason) when the reflex refuses or stops a move (the timeline)
+        self.moved_s = 0.0          # total seconds the wheels have run since Bob started (room tags use it to tell how far he has gone)
+        self._move_t0 = 0.0
         self._forward = False
         self.speed_cap = cfg.max_speed
         self.estop = threading.Event()
@@ -353,7 +355,11 @@ class Drive:
                 self._halt_locked()  # nothing to run: never energize without a deadline to stop at
                 return True
             self._apply(left, right)
-            self._deadline = time.monotonic() + seconds
+            now = time.monotonic()
+            if self._moving:
+                self.moved_s += now - self._move_t0     # a new move replaced one still running
+            self._move_t0 = now
+            self._deadline = now + seconds
             self._moving = True
             self._forward = forward
         return True
@@ -370,8 +376,14 @@ class Drive:
     def _obstacle(self):
         return self.ranger.too_close() if self.ranger else None
 
+    def moved_total(self) -> float:
+        """Seconds the wheels have run so far, including a move in progress."""
+        return self.moved_s + (time.monotonic() - self._move_t0 if self._moving else 0.0)
+
     def _halt_locked(self) -> None:
         self._apply(0, 0)
+        if self._moving:
+            self.moved_s += time.monotonic() - self._move_t0
         self._moving = False
         self._deadline = 0.0
 
@@ -599,6 +611,11 @@ class Camera:
             return None
         with self._lock:
             return self._src.frame()
+
+    def brightness(self) -> float | None:
+        """How bright the camera's picture is, 0 (black) to 255 (white), or None without a picture."""
+        frame = self.grab_bgr()
+        return None if frame is None else float(frame.mean())
 
     def close(self) -> None:
         if self._src is not None:

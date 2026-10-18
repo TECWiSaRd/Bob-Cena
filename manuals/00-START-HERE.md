@@ -34,6 +34,7 @@ This folder has one manual for each part of Bob. Each manual is written so you c
 | 16 | [Safety](16-safety.md) | know every way to stop Bob, and a pre-run checklist |
 | 17 | [Troubleshooting](17-troubleshooting.md) | fix something that isn't working |
 | 18 | [Resources](18-resources.md) | find links, file lists, parts info and cheat sheets |
+| 19 | [Home Assistant](19-home-assistant.md) | let Bob turn the lights on and off in his room |
 
 Two more guides live in the main project folder:
 - [TRAINING_HEY_BOB.md](../TRAINING_HEY_BOB.md): training a better "Hey Bob" wake word.
@@ -43,7 +44,7 @@ Two more guides live in the main project folder:
 
 ## If you're running Bob but didn't build him
 
-You don't need to read all nineteen manuals. Read this page, then [the console](03-console.md) and
+You don't need to read all twenty manuals. Read this page, then [the console](03-console.md) and
 [Safety](16-safety.md) (about fifteen minutes in total). Use the rest when you need them.
 
 **What to ask the owner for first:**

@@ -84,6 +84,10 @@ Then put him on the floor and type `/resume`.
 ## Electrical safety
 
 - **Separate power, shared ground.** Motors on their own battery, Pi on its own supply, grounds connected.
+- **`/locate` and `find_my_room` turn the whole robot on the spot** for up to 25 seconds (a wide sweep). They
+  obey `/motion off`, `/pause` and the emergency stop, and never drive forward. Clear the area first.
+- **Lights are the only thing Bob can control in your home** (see [Home Assistant](19-home-assistant.md)). He
+  can't unlock doors, change the heating or touch anything else, whatever Claude decides.
 - **Never** power motors or servos from the Pi's 5 V pins: they can reboot or damage the Pi.
 - **Red to +, black to −** on every power connection. Reversing one can destroy a board.
 - **The distance sensor's ECHO pin needs its voltage divider.** 5 V can damage a Pi pin.
@@ -101,6 +105,7 @@ Then put him on the floor and type `/resume`.
 | Bluetooth pairing | only during `/music pair` (2 minutes) | `/music forget` old phones |
 | AirPlay | everyone on your Wi-Fi, by default | `BOB_AIRPLAY_PASSWORD` when installing |
 | The radio | only a robot with the shared secret | `BOB_RADIO_SECRET` |
+| Home Assistant | anyone with `HA_TOKEN` | token only in `.env`; Bob can only switch lights, only in listed rooms, only the room he's in, with quiet hours, a cooldown and a rate limit; `/home ai off` |
 | The search index | anyone who can log in to the Pi | it holds copies of notes, people and timeline text; it follows deletions; `enabled = false` turns it off |
 | Claude searching his history | only if `/index ai on` | off by default; timeline and radio records only, shown to him as data |
 | The timeline (if on) | anyone who can log in to the Pi | off by default; `thumbnails = false`; `/timeline clear` |

@@ -192,6 +192,29 @@ See [Memory and people](14-memory-and-people.md).
 | `keep_days` | 7.0 | older records are deleted |
 | `max_mb` | 200 | the folder never grows past this; the oldest files go first |
 
+## `[home]`: Home Assistant lights
+
+See [Home Assistant](19-home-assistant.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | false | let Bob switch the lights in his room (also needs `HA_TOKEN` in `.env`) |
+| `url` | `"http://homeassistant.local:8123"` | your Home Assistant |
+| `rooms` | `[]` | the Home Assistant areas Bob may control, such as `["Kitchen", "Living Room"]` |
+| `location_entity` | `""` | a sensor whose state is the room Bob is in, such as `"sensor.bob_area"` |
+| `tags` | `{}` | room tags: tag number to room name, such as `{ 1 = "Kitchen", 2 = "Living Room" }` |
+| `tag_family` | `"tag36h11"` | `"tag36h11"` (standard AprilTag), `"tag25h9"` or `"aruco4x4_50"` |
+| `tag_min_px` | 40.0 | a tag must look this wide (pixels) to be believed, so he must be close |
+| `tag_valid_s` | 300.0 | how long a tag sighting is trusted |
+| `tag_max_move_s` | 20.0 | ...and until the wheels have run this many seconds since it |
+| `tag_scan_hz` | 3.0 | how often the camera is checked for tags |
+| `tag_search_speed` | 0.35 | how fast he turns on the spot when looking for a tag (`/locate`) |
+| `tag_search_seconds` | 25.0 | how long he looks before giving up |
+| `quiet_start`, `quiet_end` | `"22:00"`, `"07:00"` | Bob may not turn lights **on** between these times. Empty = no quiet hours |
+| `max_per_minute` | 6 | the most light changes Claude may make in a minute |
+| `cooldown_s` | 30.0 | the least time between changes to the same room |
+| `dark_below`, `bright_above` | 40.0, 90.0 | camera brightness (0-255) cut-offs for "dark" and "bright" |
+
 ## `[index]`: search index
 
 See [Memory and people](14-memory-and-people.md).
@@ -231,6 +254,7 @@ On the Pi only, readable only by you. Edit with `nano ~/bob/.env`, then restart 
 |---|---|
 | `ANTHROPIC_API_KEY=` | **required**: your Claude API key |
 | `BOB_STREAM_TOKEN=` | a password for the video page; needed (8+ characters) for the dashboard |
+| `HA_TOKEN=` | Home Assistant lights: a long-lived access token (see [Home Assistant](19-home-assistant.md)) |
 | `BOB_RADIO_SECRET=` | the radio link to John (16+ characters, identical on both robots) |
 
 `BOB_AIRPLAY_PASSWORD` isn't in `.env`: it's given to `install_music.sh` when you run it.

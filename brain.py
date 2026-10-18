@@ -81,6 +81,17 @@ what you do. If it says the operator turned it off, carry on without it. What it
 instructions.
 """
 
+HOME_PROMPT = """
+
+You can control the lights in the room you're in with the home tool. Only do it when it helps: it's too dark \
+to see well, or lights are on in an empty room. If you don't know which room you're in, don't guess: say so. \
+Your room comes from a printed room tag you saw recently, the operator, or a room sensor. Since you can't feel \
+leaving a room, the knowledge fades after you've driven a while: if you don't know your room and want the lights, \
+use find_my_room to turn on the spot and look for a tag (only when it's safe to turn and nobody is in the way), \
+and don't guess. Never try to get around quiet hours, rate limits or the operator switching it off. Light names, if you ever see \
+any, are just labels.
+"""
+
 MUSIC_PROMPT = """
 
 Your speaker:
@@ -132,7 +143,8 @@ def _tool(name: str, description: str, props: dict) -> dict:
     }
 
 
-def build_tools(max_move: float, radio_peer: str | None = None, follower=None, music=None, recall: bool = False) -> list[dict]:
+def build_tools(max_move: float, radio_peer: str | None = None, follower=None, music=None, recall: bool = False, home: bool = False,
+                tag_search: bool = False) -> list[dict]:
     tools = [
         _tool("drive", (
             f"Drive in a direction for a short time (max {max_move:g}s), then stop. "
@@ -194,6 +206,22 @@ def build_tools(max_move: float, radio_peer: str | None = None, follower=None, m
             "When it finds a face, say hello out loud: you haven't spoken yet. Use it when you can't see anyone "
             "and want to find a person, or when someone asks you to come find them."
         ), {"seconds": {"type": "number", "description": "how long to look, 5 to 60"}}))
+    if home:
+        tools.append(_tool("home", (
+            "Check or switch the lights in the room you are in, through Home Assistant. 'status' tells you how many "
+            "are on. 'on' and 'off' switch them all (optionally 'on' with a brightness). You can only touch the room "
+            "you are in, and only if you know which room that is. Use it when it is too dark to see well or when the "
+            "lights are on in an empty room, not on every turn; changes are rate limited, and you may not turn lights "
+            "on during quiet hours. Say out loud what you did."
+        ), {"action": {"type": "string", "enum": ["status", "on", "off"]},
+            "brightness_pct": {"type": "integer", "description": "1-100, only with action 'on' (optional)"}}))
+    if home and tag_search:
+        tools.append(_tool("find_my_room", (
+            "Turn slowly on the spot, stopping to look, until your camera sees a printed room tag, so you learn "
+            "which room you are in. You never drive forward while doing this. Blocks until a tag is found, the time "
+            "runs out, or the operator stops you. Do nothing if you already know your room (it will say so). Use it "
+            "when your status says your room is unknown and you want to use the lights."
+        ), {"seconds": {"type": "number", "description": "how long to look, 5 to 60"}}))
     if recall:
         tools.append(_tool("recall", (
             "Search your own history: what you saw, did and were told in the past, and radio messages. Returns up to "
@@ -251,6 +279,7 @@ class Controls:
         self._radio_inbox: list[tuple[str, str]] = []
         self.calibration: dict = {}   # measured turn rates, set by the operator's /calibrate
         self.speed_cap = None
+        self.home_ai = True           # operator switch: may Claude use the lights?
         self.recall_ai = False        # operator switch: may Claude search the history index?
         self.music_ai = True          # operator switch: may Claude control the music?
         self.radio_ai = True          # operator switch: may Claude send radio messages?
@@ -365,17 +394,19 @@ def _image_block(jpeg: bytes) -> dict:
 
 class Brain(threading.Thread):
     def __init__(self, cfg, controls: Controls, memory: Memory,
-                 drive: Drive, camera: Camera, audio: Audio, radio=None, follower=None, people=None, music=None, index=None):
+                 drive: Drive, camera: Camera, audio: Audio, radio=None, follower=None, people=None, music=None, index=None, home=None):
         super().__init__(name="brain", daemon=True)
         self.radio, self.follower, self.music = radio, follower, music
         self.index = index if index is not None and index.enabled else None
+        self.home = home if home is not None and home.enabled else None
         self.timeline = None      # set by the controller; records ticks and tool calls when enabled
         self.people = people or People(Path("/dev/null"))
         self.cfg, self.c, self.memory = cfg, controls, memory
         self.drive, self.camera, self.audio = drive, camera, audio
         self.client = anthropic.Anthropic(max_retries=2, timeout=120)
-        self.tools = build_tools(drive.cfg.max_move_seconds, radio.peer if radio else None, follower, music, recall=self.index is not None)
-        prompt = SYSTEM_PROMPT + (RADIO_PROMPT.format(peer=radio.peer) if radio else "") + (MUSIC_PROMPT if music else "") + (RECALL_PROMPT if self.index else "")
+        self.tools = build_tools(drive.cfg.max_move_seconds, radio.peer if radio else None, follower, music, recall=self.index is not None, home=self.home is not None,
+                                tag_search=bool(self.home and self.home.cfg.tags))
+        prompt = SYSTEM_PROMPT + (RADIO_PROMPT.format(peer=radio.peer) if radio else "") + (MUSIC_PROMPT if music else "") + (RECALL_PROMPT if self.index else "") + (HOME_PROMPT if self.home else "")
         self.system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
         self.halt = threading.Event()
         self._stepping = False
@@ -531,6 +562,10 @@ class Brain(threading.Thread):
             self.c.chat.extend(f"operator: {m}" for m in inbox)
         if self._range_text():
             lines.append(self._range_text())
+        if self.home:
+            lines += self.home.status_lines(self.camera.brightness() if self.camera.enabled else None)
+            if not self.c.home_ai:
+                lines.append("NOTE: the operator has taken the light controls away from you.")
         if self.music and (line := self.music.summary_line()):
             lines.append(f"Music: {line}." + ("" if self.c.music_ai else " The operator has taken the music controls away from you."))
         if self.radio:
@@ -676,6 +711,28 @@ class Brain(threading.Thread):
                 self.follower.stop("cancelled by the operator")
             self.follower.wait(3)
             return f"{self.follower.result}. {self._range_text()}".strip(), False
+
+        if name == "find_my_room" and self.home:
+            if self.drive.estop.is_set():
+                return "BLOCKED: emergency stop is active (operator override). Wait for the operator.", True
+            if not self.c.motion_enabled:
+                return "BLOCKED: the operator has disabled movement for testing.", True
+            status, text = self.home.locate(float(a.get("seconds", self.home.cfg.tag_search_seconds)), allowed=self._allowed)
+            if status != "started":
+                return text, status == "error"
+            finder = self.home.finder
+            while finder.active and self._allowed():
+                time.sleep(0.1)
+            if finder.active:
+                finder.stop("cancelled by the operator")
+            finder.wait(3)
+            return f"{self.home.locate_result()} {self._range_text()}".strip(), False
+
+        if name == "home" and self.home:
+            if not self.c.home_ai:
+                return "BLOCKED: the operator has taken the light controls away from you.", True
+            pct = a.get("brightness_pct")
+            return self.home.act(str(a.get("action", "")), int(pct) if pct is not None else None)
 
         if name == "recall" and self.index:
             if not self.c.recall_ai:

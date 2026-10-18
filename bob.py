@@ -34,6 +34,7 @@ from stream import StreamServer
 from selfcheck import format_report, run_checks
 from timeline import Timeline
 from index import Index
+from home import Home
 
 BASE = Path(__file__).resolve().parent
 log = logging.getLogger("bob")
@@ -65,6 +66,10 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /check                one report: camera, motors, audio, mic, stream, sensor, temperature, power, Wi-Fi, disk
   /timeline             record what Bob saw and did (on|off, show [n], clear)
   /search WORDS         search everything Bob has recorded: /search lens covered kind:estop since:2d
+  /home                 lights in Bob's room via Home Assistant: status, on, off, ai on|off (may Claude use them?), check
+  /locate [seconds]     turn slowly on the spot looking for a room tag, to find out which room he's in (/locate off stops)
+  /tags                 what room tags the camera sees right now (point him at a tag to test it)
+  /where [room|clear]   tell Bob which room he is in (overrides the room sensor); /where alone shows it
   /index                the search index: status, sync, rebuild, ai on|off (may Claude search his history?)
   /range                distance sensor reading; also: on|off, stop <cm>
   /talk (or Tab)        push-to-talk: press to start recording, again to send
@@ -151,6 +156,8 @@ class Controller:
         self.timeline = Timeline(cfg.timeline, BASE / "logs" / "timeline")
         self._last_manual_event = float("-inf")
         self.index = Index(cfg.index, BASE)
+        self.home = Home(cfg.home, os.environ.get("HA_TOKEN", ""))
+        self.home.on_event = lambda **kw: self.timeline.record("home", **kw)
         self.drive.on_event = lambda why: self.timeline.record("stop", reason=why)
         self.controls = Controls(cfg.brain.goal, auto=not (paused or cfg.brain.start_paused))
         self.controls.calibration = self.calibration
@@ -158,7 +165,7 @@ class Controller:
         self.controls.speed_cap = lambda: self.drive.speed_cap
         self.memory = Memory(BASE / "memory.json")
         self.people = People(BASE / "people.json")
-        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index)
+        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home)
         self.brain.timeline = self.timeline
 
     def _make_radio(self, rc):
@@ -197,6 +204,7 @@ class Controller:
                 log.warning("Camera stream not started (%s)", e)
                 self.stream = None
         self.index.start()
+        self.home.attach_camera(self.camera, self.drive)
         self.brain.start()
         self.listener.start()
         if self.music:
@@ -245,6 +253,23 @@ class Controller:
             self.audio.play("chirp")
             self.audio.say("There you are!")
 
+    def home_command(self, words: list[str]) -> str:
+        h = self.home
+        if not h.enabled:
+            return f"Home Assistant isn't set up: {h.problem or 'set enabled = true under [home]'}"
+        sub = words[0] if words else "status"
+        if sub == "check":
+            level, detail = h.check()
+            return f"{level}: {detail}"
+        if sub == "ai" and len(words) == 2 and words[1] in ("on", "off"):
+            self.controls.home_ai = words[1] == "on"
+            return f"Bob {'may' if self.controls.home_ai else 'may NOT'} use the lights"
+        if sub in ("status", "on", "off"):
+            pct = int(words[1]) if sub == "on" and len(words) > 1 and words[1].isdigit() else None
+            text, _ = h.act(sub, pct, operator=True)
+            return text + f"  (Bob may use the lights himself: {'yes' if self.controls.home_ai else 'NO'})" * (sub == "status")
+        return "usage: /home | on [brightness%] | off | check | ai on|off"
+
     def search_command(self, query: str) -> str:
         if not self.index.enabled:
             return "the search index is off: set [index] enabled = true in config.toml"
@@ -269,6 +294,16 @@ class Controller:
             self.controls.recall_ai = words[1] == "on"
             return f"Bob {'may' if self.controls.recall_ai else 'may NOT'} search his history"
         return "usage: /index | sync | rebuild | ai on|off"
+
+    def _announce_locate(self, session: int) -> None:
+        """After a /locate: say the room out loud if it worked. Runs off the console thread."""
+        finder = self.home.finder
+        outcome = finder.outcome(session, self.cfg.home.tag_search_seconds + 130)
+        if outcome and outcome[0]:
+            room, _ = self.home.where()
+            self.audio.play("chirp")
+            self.audio.say(f"I'm in the {room}." if room else "I found a room tag.")
+        log.info("LOCATE %s", outcome[1] if outcome else "no result")
 
     def timeline_command(self, words: list[str]) -> str:
         tl = self.timeline
@@ -380,6 +415,7 @@ class Controller:
             self.music.stop()     # puts the music volume back if it was ducked
         self.listener.stop()
         self.index.stop()
+        self.home.stop()
         if self.radio:
             self.radio.stop()
             if self.radio.is_alive():
@@ -622,6 +658,35 @@ class Controller:
                 return format_report(run_checks(self, BASE))
             case "timeline":
                 return self.timeline_command(arg.lower().split())
+            case "where":
+                if not self.home.enabled:
+                    return "Home Assistant isn't set up ([home] in config.toml), so Bob doesn't track rooms"
+                if arg:
+                    return self.home.set_manual(arg)
+                room, why = self.home.where()
+                return f"Bob is in the {room} ({why})" if room else f"Bob doesn't know his room ({why or 'use /where <room>'}). Rooms: {', '.join(self.home.rooms.values())}"
+            case "locate":
+                word = arg.lower().strip()
+                if word in ("off", "stop"):
+                    if self.home.finder and self.home.finder.active:
+                        self.home.finder.stop()
+                        return "stopping"
+                    return "not looking"
+                if not self.home.enabled:
+                    return "Home Assistant isn't set up ([home] in config.toml), so Bob doesn't track rooms"
+                if not c.motion_enabled:
+                    return "movement is disabled (/motion on)"
+                status, text = self.home.locate(float(word) if word else None)
+                if status == "started":
+                    self.background(self._announce_locate, self.home.finder.session)
+                    return text + " (/locate off to stop; the emergency stop works too)"
+                return text
+            case "tags":
+                if not self.home.enabled:
+                    return "Home Assistant isn't set up ([home] in config.toml), so Bob doesn't track rooms"
+                return self.home.tags_report(self.camera.grab_bgr() if self.camera.enabled else None)
+            case "home":
+                return self.home_command(arg.lower().split())
             case "search":
                 return self.search_command(arg)
             case "index":

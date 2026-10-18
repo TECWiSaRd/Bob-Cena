@@ -114,6 +114,25 @@ thumb_width = 320
 keep_days = 7.0            # older records are deleted
 max_mb = 200               # the folder never grows beyond this
 
+[home]
+enabled = false            # true = Bob may turn the lights in his room on and off through Home Assistant (see manual 19)
+url = "http://homeassistant.local:8123"
+rooms = []                 # Home Assistant areas he may control, for example ["Kitchen", "Living Room"]
+location_entity = ""       # a sensor whose state is the room Bob is in, for example "sensor.bob_area"
+quiet_start = "22:00"      # no turning lights ON between these times (off is fine). Empty = never quiet
+quiet_end = "07:00"
+max_per_minute = 6
+cooldown_s = 30.0
+dark_below = 40.0          # camera brightness (0-255)
+bright_above = 90.0
+# Room tags: printed AprilTags by each door (make them with tag_tools.py; manual 19). Tag number = room.
+tags = {}                  # for example { 1 = "Kitchen", 2 = "Living Room" }
+tag_min_px = 40.0          # a tag must look this wide (pixels) to be believed, so he has to be close
+tag_valid_s = 300.0
+tag_search_speed = 0.35    # /locate: how fast he turns on the spot looking for a tag
+tag_search_seconds = 25.0  # ...and how long he looks
+tag_max_move_s = 20.0      # the room is forgotten once the wheels have run this long since the last tag
+
 [index]
 enabled = true             # a searchable index of the timeline, notes, people, radio, warnings and manuals (/search)
 interval_s = 5.0

@@ -120,6 +120,19 @@ Each part's own manual has more detail.
 | Calibration: `pause Bob first` | `/pause` |
 | Calibration: `not enough detail` | point him at furniture, not a blank wall |
 
+## Home Assistant
+
+| Problem | Fix |
+|---|---|
+| `Home Assistant disabled: ...` at startup | the message says what's missing: usually `HA_TOKEN` in `.env`, or `rooms` |
+| `can't reach Home Assistant` | check `url` (try the IP address) from the Pi: `curl http://<address>:8123` |
+| `I don't know which room I'm in` | `/where <room>`, or fix the room sensor |
+| `/locate` finds nothing | stand him where a tag is in view, check height and size with `/tags` (manual 19) |
+| `/tags` shows nothing | see "Room tags" in [Home Assistant](19-home-assistant.md): height, size, glare, and `tag_min_px` |
+| He won't turn lights on | quiet hours, the 30 s cooldown, or `/home ai off`: the message says which |
+
+More in [Home Assistant](19-home-assistant.md).
+
 ## Music and radio
 
 | Problem | Fix |
