@@ -25,6 +25,7 @@ class LogBuffer(logging.Handler):
     def __init__(self, maxlen: int = 3000):
         super().__init__()
         self.lines: deque[tuple[int, str, str]] = deque(maxlen=maxlen)
+        self.listeners: list = []     # callables(level, tag, line): the shared console streams new lines to its clients
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -35,6 +36,11 @@ class LogBuffer(logging.Handler):
             return
         for line in text.splitlines():
             self.lines.append((record.levelno, tag, line))
+            for listener in list(self.listeners):
+                try:
+                    listener(record.levelno, tag, line)
+                except Exception:
+                    pass
 
 
 class ConsoleUI:

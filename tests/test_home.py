@@ -28,6 +28,7 @@ class FakeHA:
         self.areas = {"kitchen": ["light.kitchen_ceiling", "light.kitchen_strip", "switch.kitchen_kettle", "lock.front_door"],
                       "living room": ["light.living_lamp"], "bedroom": []}
         self.calls = []
+        self.templates = []
         self.fail = False
         ha = self
 
@@ -66,7 +67,9 @@ class FakeHA:
                     return
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
                 if self.path == "/api/template":
-                    area = re.search(r"area_entities\('([^']*)'\)", body["template"]).group(1).lower()
+                    raw = re.search(r"area_entities\('((?:[^'\\]|\\.)*)'\)", body["template"]).group(1)
+                    area = re.sub(r"\\(.)", r"\1", raw).lower()          # undo the escaping, as the template engine would
+                    ha.templates.append(body["template"])
                     ents = [e for e in ha.areas.get(area, []) if re.match("light[.]", e)]
                     return self._reply(200, json.dumps(ents), text=True)
                 m = re.fullmatch(r"/api/services/light/(turn_on|turn_off)", self.path)
@@ -252,11 +255,37 @@ class HomeTests(unittest.TestCase):
         self.assertFalse(Home(config.HomeConfig(), TOKEN).enabled)                    # not turned on
         self.assertIn("HA_TOKEN", Home(cfg_for(self.ha.url), "").problem)
 
-    def test_hostile_room_name_cannot_break_the_template(self):
-        h = self.home(rooms=["Kit'chen}} {{ evil"])
-        h.set_manual("Kit'chen}} {{ evil")
-        self.assertEqual(h.where()[0], "Kit'chen}} {{ evil")
-        h.act("status")          # must not raise; the quote characters are removed before the template is built
+    def test_a_room_name_with_an_apostrophe_still_finds_its_lights(self):
+        self.ha.areas["adam's room"] = ["light.desk"]
+        self.ha.states["light.desk"] = "off"
+        self.ha.states["sensor.bob_area"] = "Adam's Room"
+        h = self.home(rooms=["Kitchen", "Adam's Room"])
+        self.assertEqual(h.where()[0], "Adam's Room")
+        self.assertEqual(h.act("on")[1], False)
+        self.assertEqual(self.ha.states["light.desk"], "on")
+
+    def test_name_and_area_id_are_the_same_room(self):
+        self.assertEqual(slug("Adam's Room"), "adams_room")
+        self.assertEqual(slug("Adam\u2019s Room"), "adams_room")        # a curly apostrophe too
+        self.assertEqual(slug("adams_room"), "adams_room")
+        self.ha.areas["adams_room"] = ["light.desk"]
+        self.ha.states["light.desk"] = "off"
+        for configured in ("adams_room", "Adam's Room"):
+            self.ha.states["sensor.bob_area"] = "Adam's Room"            # Home Assistant's sensor says the NAME
+            h = self.home(rooms=["Kitchen", configured])
+            self.assertEqual(h.where()[0], configured, configured)
+            h.set_manual("adams room")                                    # and so does typing it
+            self.assertEqual(h.where()[0], configured, configured)
+
+    def test_hostile_room_name_stays_inside_its_string(self):
+        evil = "x'); {{ states('lock.front_door') }} ('"
+        h = self.home(rooms=["Kitchen", evil])
+        h.set_manual(evil)
+        h.act("status")          # must not raise
+        template = self.ha.templates[-1]
+        inner = template[template.index("area_entities('") + len("area_entities('"):template.index("') | select")]
+        self.assertNotRegex(inner, r"(?<!\\)'")      # every apostrophe inside the name is escaped
+        self.assertEqual(self.ha.states["lock.front_door"], "locked")
 
     # ---- what Claude is told ------------------------------------------------------------------------------------
     def test_status_lines(self):

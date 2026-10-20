@@ -30,11 +30,13 @@ from radio import Radio
 from sensors import RangeSensor
 from calibrate import Calibrator
 from vision import FaceDetector, Follower
+from access import AccessPolicy
 from stream import StreamServer
 from selfcheck import format_report, run_checks
 from timeline import Timeline
 from index import Index
 from home import Home
+from power import PowerControl
 
 BASE = Path(__file__).resolve().parent
 log = logging.getLogger("bob")
@@ -69,6 +71,10 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /home                 lights in Bob's room via Home Assistant: status, on, off, ai on|off (may Claude use them?), check
   /locate [seconds]     turn slowly on the spot looking for a room tag, to find out which room he's in (/locate off stops)
   /tags                 what room tags the camera sees right now (point him at a tag to test it)
+  /tags min [px|reset]  set how big a tag must look to count: stand him at the farthest distance you want, facing a tag
+  /access               the Wi-Fi network Bob is on and which dashboard tokens work on it right now
+  /shutdown             power the Pi off (then /shutdown confirm). The Pi can't be switched back on from here
+  /who                  who is attached to the shared console (manual 20)
   /where [room|clear]   tell Bob which room he is in (overrides the room sensor); /where alone shows it
   /index                the search index: status, sync, rebuild, ai on|off (may Claude search his history?)
   /range                distance sensor reading; also: on|off, stop <cm>
@@ -91,14 +97,20 @@ def load_env(path: Path) -> None:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+            key = key.strip()
+            # WIFI[...] and TOKEN_ lines are read by access.py; they stay out of the environment that child programs inherit
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) and not key.startswith("TOKEN_"):
+                os.environ.setdefault(key, value.strip().strip("'\""))
 
 
+TAG_MIN_LIMITS = (15.0, 400.0)   # the room-tag size limit (pixels) /tags min may set
 TUNING_LIMITS = {"left_trim": (-0.5, 0.5), "right_trim": (-0.5, 0.5), "dc_min_duty": (0.0, 0.9)}
 
 
-def load_tuning(drive_cfg) -> dict:
-    """Apply tuning.json over config.toml. Returns the saved calibration (turn rates) or {}."""
+def load_tuning(drive_cfg, home_cfg=None, extra: dict | None = None) -> dict:
+    """Apply tuning.json over config.toml. Returns the saved calibration (turn rates) or {}.
+
+    `extra` collects other saved values (so they are written back later); `home_cfg` gets the room-tag size limit."""
     if not TUNING.exists():
         return {}
     try:
@@ -113,6 +125,12 @@ def load_tuning(drive_cfg) -> dict:
             calib = {"turn": {str(k): float(v) for k, v in raw["turn"].items()}, "cap": float(raw.get("cap", 1.0))}
         for key, value in values.items():
             setattr(drive_cfg, key, value)
+        tag_min = data.get("tag_min_px")
+        if home_cfg is not None and isinstance(tag_min, (int, float)) and not isinstance(tag_min, bool):
+            home_cfg.tag_min_px = max(TAG_MIN_LIMITS[0], min(TAG_MIN_LIMITS[1], float(tag_min)))
+            if extra is not None:
+                extra["tag_min_px"] = home_cfg.tag_min_px
+            log.info("Applied tag_min_px=%g from %s", home_cfg.tag_min_px, TUNING.name)
         if values:
             log.info("Applied %s over config.toml: %s", TUNING.name,
                      ", ".join(f"{k}={v:g}" for k, v in values.items()))
@@ -122,8 +140,9 @@ def load_tuning(drive_cfg) -> dict:
         return {}
 
 
-def save_tuning(drive_cfg, calibration: dict | None = None) -> None:
+def save_tuning(drive_cfg, calibration: dict | None = None, extra: dict | None = None) -> None:
     data = {k: getattr(drive_cfg, k) for k in TUNABLE}
+    data.update(extra or {})
     if calibration:
         data["calibration"] = calibration
     TUNING.write_text(json.dumps(data, indent=1))
@@ -132,7 +151,9 @@ def save_tuning(drive_cfg, calibration: dict | None = None) -> None:
 class Controller:
     def __init__(self, cfg: config.Config, sim: bool, paused: bool):
         self.cfg = cfg
-        self.calibration = load_tuning(cfg.drive)
+        self.default_tag_min = cfg.home.tag_min_px      # the config.toml value, for /tags min reset
+        self.tuning_extra: dict = {}                    # other saved tuning (the tag size limit)
+        self.calibration = load_tuning(cfg.drive, cfg.home, self.tuning_extra)
         self.calibrating = None   # the Calibrator while a calibration run is in progress
         self.quit = threading.Event()
         self.drive_mode = False
@@ -140,7 +161,8 @@ class Controller:
         self.drive = Drive(cfg.drive, sim, self.ranger)
         self.drive.on_estop = self.estop
         self.camera = Camera(cfg.camera, sim)
-        self.stream = StreamServer(cfg.stream, self.camera) if cfg.stream.enabled else None
+        self.access = AccessPolicy.load(BASE / ".env", os.environ.get("BOB_STREAM_TOKEN", ""))
+        self.stream = StreamServer(cfg.stream, self.camera, self.access) if cfg.stream.enabled else None
         self.audio = Audio(cfg.audio, BASE / "sounds", sim, BASE / "voices")
         self.listener = Listener(cfg.mic, self.heard, self.audio, self.drive)
         self.listener.on_wake = lambda: self.background(self.audio.play, "chirp")
@@ -156,6 +178,7 @@ class Controller:
         self.timeline = Timeline(cfg.timeline, BASE / "logs" / "timeline")
         self._last_manual_event = float("-inf")
         self.index = Index(cfg.index, BASE)
+        self.power = PowerControl(cfg.power, sim=sim)
         self.home = Home(cfg.home, os.environ.get("HA_TOKEN", ""))
         self.home.on_event = lambda **kw: self.timeline.record("home", **kw)
         self.drive.on_event = lambda why: self.timeline.record("stop", reason=why)
@@ -270,6 +293,29 @@ class Controller:
             return text + f"  (Bob may use the lights himself: {'yes' if self.controls.home_ai else 'NO'})" * (sub == "status")
         return "usage: /home | on [brightness%] | off | check | ai on|off"
 
+    def shutdown_command(self, words: list[str], by: str | None, role: str) -> str:
+        """/shutdown, then /shutdown confirm: power the Pi off. Two steps, by the same person."""
+        if not self.power.allows(role):
+            return "powering the Pi off from here isn't allowed for your kind of user ([power] in config.toml)"
+        who = by or "the console"
+        if words[:1] == ["cancel"]:
+            return self.power.cancel(who)
+        if words[:1] != ["confirm"]:
+            return self.power.request(who)
+        ok, message = self.power.confirm(who)
+        if not ok:
+            return message
+        log.warning("SHUTDOWN: %s is powering the Pi off", who)
+        self.timeline.record("power", action="shutdown", by=by or "console")
+
+        def goodbye():
+            try:
+                self.audio.say("Shutting down now. Goodbye!")
+            finally:
+                self.quit.set()           # main() shuts Bob down cleanly, then runs the power-off
+        self.background(goodbye)
+        return "Shutting down: stopping Bob, then powering the Pi off. Unplug and replug the power to start it again."
+
     def search_command(self, query: str) -> str:
         if not self.index.enabled:
             return "the search index is off: set [index] enabled = true in config.toml"
@@ -294,6 +340,32 @@ class Controller:
             self.controls.recall_ai = words[1] == "on"
             return f"Bob {'may' if self.controls.recall_ai else 'may NOT'} search his history"
         return "usage: /index | sync | rebuild | ai on|off"
+
+    def tag_min_command(self, words: list[str]) -> str:
+        """/tags min: how big (in pixels) a tag must look before Bob believes it. Measured, typed, or reset."""
+        cfg = self.cfg.home
+        lo, hi = TAG_MIN_LIMITS
+        if not words:
+            if self.drive.moving:
+                return "hold still: he's moving"
+            size, text = self.home.measure_tag()
+            if size is None:
+                return text
+            cfg.tag_min_px = self.tuning_extra["tag_min_px"] = max(lo, min(hi, round(size * 0.9)))
+            save_tuning(self.cfg.drive, self.calibration, self.tuning_extra)
+            return f"{text}\nMinimum set to {cfg.tag_min_px:g} px (90% of that) and saved: tags that look smaller, meaning further away, are ignored."
+        if words == ["reset"]:
+            cfg.tag_min_px = self.default_tag_min
+            self.tuning_extra.pop("tag_min_px", None)
+            save_tuning(self.cfg.drive, self.calibration, self.tuning_extra)
+            return f"minimum back to {cfg.tag_min_px:g} px (config.toml)"
+        try:
+            value = float(words[0])
+        except ValueError:
+            return "usage: /tags min | /tags min <pixels> | /tags min reset"
+        cfg.tag_min_px = self.tuning_extra["tag_min_px"] = max(lo, min(hi, value))
+        save_tuning(self.cfg.drive, self.calibration, self.tuning_extra)
+        return f"minimum set to {cfg.tag_min_px:g} px and saved"
 
     def _announce_locate(self, session: int) -> None:
         """After a /locate: say the room out loud if it worked. Runs off the console thread."""
@@ -361,13 +433,13 @@ class Controller:
                     rates = cal.turn()
                     self.calibration = {"turn": rates, "cap": round(self.drive.speed_cap, 3)}
                     self.controls.calibration = self.calibration
-                    save_tuning(d, self.calibration)
+                    save_tuning(d, self.calibration, self.tuning_extra)
                     log.info("CALIB done: turn rates (deg/s at command speed): %s - saved, and Bob has been told",
                              ", ".join(f"{k}: {v:g}" for k, v in rates.items()))
                 else:
                     res = cal.straight()
                     d.right_trim, d.left_trim = res["right_trim"], res["left_trim"]
-                    save_tuning(d, self.calibration)
+                    save_tuning(d, self.calibration, self.tuning_extra)
                     log.info("CALIB done: drift %+.1f deg/s before; trims now left %+.3f, right %+.3f - saved. "
                              "Run /fwd 3 to check it, or /calibrate straight go again to refine",
                              res["drift_before"], d.left_trim, d.right_trim)
@@ -476,29 +548,32 @@ class Controller:
             self.drive.start(left, right, seconds)
         return f"manual move L={left:+.2f} R={right:+.2f} {seconds:.1f}s"
 
-    def handle(self, line: str) -> str | None:
+    def handle(self, line: str, by: str | None = None, role: str = "owner") -> str | None:
+        """Run one console line. `by` names the person when it came from the shared console or dashboard;
+        `role` says what kind of user they are (owner, operator, viewer or dashboard)."""
         line = line.strip()
         if not line:
             return None
+        who = f"[{by}] " if by else ""
         if not line.startswith("/"):
-            log.info("YOU  %s", line)
-            self.timeline.record("operator", text=line)
-            self.controls.post(line)
+            log.info("YOU  %s%s", who, line)
+            self.timeline.record("operator", text=line, by=by)
+            self.controls.post(f"{who}{line}")
             return None if self.controls.auto else "queued for Bob - use /ask to get an answer now"
 
         cmd, _, arg = line[1:].partition(" ")
         arg = arg.strip()
         c = self.controls
         if cmd.lower() not in ("ask", "tell", "timeline", "search", "index"):   # /ask is recorded below; the rest would record themselves
-            self.timeline.record("operator_command", cmd=cmd.lower(), arg=arg or None)
+            self.timeline.record("operator_command", cmd=cmd.lower(), arg=arg or None, by=by)
         if cmd.lower() in ("ask", "tell"):
             if not arg:
                 return "usage: /ask <message> - Bob answers now, even while paused"
             if self.drive.estop.is_set():
                 return "E-stop active - /clear first"
-            log.info("YOU  %s", arg)
-            self.timeline.record("operator", text=arg)
-            c.post(arg)
+            log.info("YOU  %s%s", who, arg)
+            self.timeline.record("operator", text=arg, by=by)
+            c.post(f"{who}{arg}")
             if not c.auto:
                 c.step_once.set()
             return None
@@ -585,14 +660,14 @@ class Controller:
                     setattr(d, f"{words[0]}_trim", max(-0.5, min(0.5, float(words[1]))))
                 else:
                     return "usage: /trim | /trim left 0.05 | /trim right -0.03 | /trim reset"
-                save_tuning(d, self.calibration)
+                save_tuning(d, self.calibration, self.tuning_extra)
                 return f"trim saved: left {d.left_trim:+.3f}, right {d.right_trim:+.3f}"
             case "minduty":
                 d = self.cfg.drive
                 if not arg:
                     return f"minimum motor duty {d.dc_min_duty:.2f} (raise if a wheel hums without turning)"
                 d.dc_min_duty = max(0.0, min(0.9, float(arg)))
-                save_tuning(d, self.calibration)
+                save_tuning(d, self.calibration, self.tuning_extra)
                 return f"minimum motor duty {d.dc_min_duty:.2f} saved"
             case "listen" | "mic":
                 words = arg.lower().split()
@@ -684,9 +759,23 @@ class Controller:
             case "tags":
                 if not self.home.enabled:
                     return "Home Assistant isn't set up ([home] in config.toml), so Bob doesn't track rooms"
+                words = arg.lower().split()
+                if words[:1] == ["min"]:
+                    return self.tag_min_command(words[1:])
+                if words:
+                    return "usage: /tags | /tags min | /tags min <pixels> | /tags min reset"
                 return self.home.tags_report(self.camera.grab_bgr() if self.camera.enabled else None)
             case "home":
                 return self.home_command(arg.lower().split())
+            case "access":
+                if not self.access.configured:
+                    return "no dashboard tokens are set: add BOB_STREAM_TOKEN or TOKEN_NAME lines to .env (manual 07)"
+                return self.access.describe()
+            case "shutdown":
+                return self.shutdown_command(arg.lower().split(), by, role)
+            case "who":
+                text = self.remote.describe() if getattr(self, "remote", None) else "off"
+                return "the shared console is off ([remote] enabled = true)" if text == "off" else text
             case "search":
                 return self.search_command(arg)
             case "index":
@@ -812,11 +901,14 @@ def main() -> None:
         log.addHandler(sh)
 
     ctrl = Controller(cfg, sim=args.sim, paused=args.paused)
+    from remote import RemoteConsole
+    ctrl.remote = RemoteConsole(cfg.remote, ctrl, logbuf)
     signal.signal(signal.SIGTERM, lambda *_: ctrl.quit.set())
     signal.signal(signal.SIGHUP, lambda *_: ctrl.quit.set())
     if ctrl.stream:
         ctrl.stream.attach(ctrl, logbuf)
     ctrl.start()
+    ctrl.remote.start()
     try:
         if args.headless:
             run_headless(ctrl)
@@ -826,7 +918,12 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        ctrl.remote.stop()
         ctrl.shutdown()
+        if ctrl.power.requested:                  # a confirmed /shutdown: Bob is stopped cleanly, now power off
+            ok, message = ctrl.power.execute()
+            log.warning("%s", message)
+            print(message, file=sys.stderr)
 
 
 if __name__ == "__main__":

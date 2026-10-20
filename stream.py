@@ -9,7 +9,6 @@ every request must carry ?token=<value>.
 """
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import os
@@ -17,7 +16,9 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
+
+from access import AccessPolicy, Lockout
 
 log = logging.getLogger("bob.stream")
 
@@ -32,7 +33,7 @@ img{max-width:100%%;height:auto}p{margin:.5em}</style>
 # Commands the dashboard may run (the first word, without the slash). Anything else is refused:
 # no /quit, /forget, /people clear, /calibrate (it drives the robot for a long time) and so on.
 DASH_COMMANDS = {"estop", "clear", "pause", "hush", "resume", "step", "ask", "motion", "camera", "mute", "unmute",
-                 "follow", "find", "check", "radio", "listen", "range", "speed", "goal", "say", "sound", "talk", "trim", "music"}
+                 "follow", "find", "check", "radio", "listen", "range", "speed", "goal", "say", "sound", "talk", "trim", "music", "shutdown"}
 
 DASH_PAGE = """<!doctype html><html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -75,6 +76,8 @@ small{color:var(--dim)}
    <button data-c="music vol down">Vol &minus;</button><button data-c="music vol up">Vol +</button></div></div>
  <div class=card><form id=say class=row><input id=msg placeholder="Say something to Bob (or a /command)" autocomplete=off><button style="flex:0 0 80px">Send</button></form></div>
  <div class=card><b>Log</b><pre id=log></pre></div>
+ <div class=card id=powercard style="display:none"><button id=poweroff style="width:100%">Shut down the Pi</button>
+  <p style="margin:8px 0 0"><small>Bob stops, says goodbye, and the Pi powers off. It can't be switched back on from here: someone has to unplug and replug the power.</small></p></div>
 </main>
 <script>
 const tok=new URLSearchParams(location.search).get('token')||'';
@@ -85,6 +88,7 @@ async function post(path,body){const r=await fetch(q(path),{method:'POST',header
 async function cmd(c){const r=await post('api/cmd',{cmd:c});if(r.output){note(r.output)}}
 function note(t){const p=$('log');p.append(document.createTextNode('> '+t+'\\n'));p.scrollTop=p.scrollHeight}
 $('estop').onclick=()=>cmd('/estop');
+$('poweroff').onclick=async()=>{if(!confirm('Shut down the Pi? It cannot be switched back on from here: someone has to unplug and replug the power.'))return;await cmd('/shutdown');await cmd('/shutdown confirm')};
 document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>cmd('/'+b.dataset.c));
 $('say').onsubmit=e=>{e.preventDefault();const v=$('msg').value.trim();if(v){$('msg').value='';cmd(v.startsWith('/')?v:'/ask '+v)}};
 let timer=null;
@@ -98,7 +102,7 @@ addEventListener('blur',()=>{if(timer){clearInterval(timer);timer=null;drive(0,0
 let shown=0;
 async function poll(){try{
  const s=await (await fetch(q('api/status'))).json();
- $('musiccard').style.display=s.music_enabled?'':'none';$('musictext').textContent=s.music||'';
+ $('powercard').style.display=s.power?'':'none';$('musiccard').style.display=s.music_enabled?'':'none';$('musictext').textContent=s.music||'';
  const m=$('mode');m.textContent=s.mode;m.className='chip '+(s.mode==='E-STOP'?'bad':s.mode==='AUTO'?'ok':'warn');
  const chips=[['AI '+(s.thinking?'thinking':'idle')],['camera '+s.camera,s.camera==='OFF'?'warn':''],['mic '+s.mic],['audio '+(s.muted?'MUTED':'on'),s.muted?'warn':''],
   ['cap '+s.cap],s.radio?['radio '+s.radio,s.radio==='connected'?'ok':'']:null,s.dist!=null?['dist '+s.dist+' cm',s.dist<20?'bad':'']:null,
@@ -131,10 +135,13 @@ class FrameHub:
 
 
 class StreamServer:
-    def __init__(self, cfg, camera):
+    def __init__(self, cfg, camera, policy: AccessPolicy | None = None):
         self.cfg = cfg
         self.hub = FrameHub(camera, cfg.fps)
-        self.token = os.environ.get("BOB_STREAM_TOKEN", "")
+        # Who may get in: the owner's BOB_STREAM_TOKEN plus any per-person, per-Wi-Fi tokens (access.py)
+        self.policy = policy or AccessPolicy(os.environ.get("BOB_STREAM_TOKEN", ""))
+        self.lockout = Lockout()
+        self._seen_users: dict[str, float] = {}
         self.clients = 0
         self._httpd = None
         self.controller = None     # set by attach(): the dashboard needs it
@@ -145,7 +152,12 @@ class StreamServer:
 
     @property
     def dashboard_enabled(self) -> bool:
-        return bool(self.cfg.dashboard and self.token and len(self.token) >= 8 and self.controller is not None)
+        return bool(self.cfg.dashboard and self.policy.can_run_dashboard() and self.controller is not None)
+
+    @property
+    def token(self) -> str:
+        """The owner's token (kept for older code and tests)."""
+        return self.policy.owner_token
 
     def status(self) -> dict:
         c = self.controller
@@ -157,11 +169,19 @@ class StreamServer:
                 "mic": c.listener.describe(), "muted": c.audio.muted, "cap": round(c.drive.speed_cap, 2),
                 "radio": c.radio.state if c.radio else "", "dist": None if dist is None else round(dist),
                 "follow": c.follower.active, "calibrating": bool(c.calibrating), "cost": ctl.cost,
+                "power": bool(getattr(c, "power", None) and c.power.allows("dashboard")),
                 "music_enabled": bool(c.music), "music": c.music.describe() if c.music else "",
                 "model": c.cfg.brain.model.replace("claude-", ""), "effort": c.cfg.brain.effort,
                 "log": [{"l": logging.getLevelName(lv), "t": tag, "m": line} for lv, tag, line in lines]}
 
-    def run_command(self, text: str) -> str:
+    def note_user(self, name: str) -> None:
+        """Log the first request from each person every 10 minutes, so the log shows who is using the dashboard."""
+        now = time.monotonic()
+        if now - self._seen_users.get(name, -1e9) > 600:
+            self._seen_users[name] = now
+            log.info("Dashboard: %s connected", name)
+
+    def run_command(self, text: str, by: str | None = None) -> str:
         """Run a console command for the dashboard, but only from the allowed list."""
         text = str(text).strip()[:500]
         if not text:
@@ -170,7 +190,7 @@ class StreamServer:
             name = text[1:].split(None, 1)[0].lower() if len(text) > 1 else ""
             if name not in DASH_COMMANDS:
                 return f"/{name} isn't available from the dashboard"
-        return self.controller.handle(text) or ""
+        return self.controller.handle(text, by=by, role="dashboard") or ""
 
     def start(self) -> None:
         server = self
@@ -182,21 +202,34 @@ class StreamServer:
             def log_message(self, *args):  # keep the console clean
                 pass
 
+            def _who(self, query, strong: bool) -> str | None:
+                """The name of the person this request's token belongs to, or None after answering with an error."""
+                ip = self.client_address[0]
+                if server.lockout.blocked(ip):
+                    self.close_connection = True
+                    self._send(429, b"too many wrong tries: wait a minute", "text/plain")
+                    return None
+                name = server.policy.check(query.get("token", [""])[0], strong)
+                if name is None:
+                    server.lockout.failed(ip)
+                    self._send(401, b"unauthorized", "text/plain")
+                    return None
+                server.note_user(name)
+                return name
+
             def _authorized(self, query) -> bool:
-                if not server.token:
+                if not server.policy.configured:
                     return True
-                return query.get("token", [""])[0] == server.token
+                self.user = self._who(query, strong=False)
+                return self.user is not None
 
             def _dash_check(self, query) -> bool:
-                """Dashboard requests need the password even more strictly: it can move the robot."""
+                """Dashboard requests need a proper token even more strictly: it can move the robot."""
                 if not server.dashboard_enabled:
-                    self._send(403, b"dashboard is off: set BOB_STREAM_TOKEN (8+ characters) in .env", "text/plain")
+                    self._send(403, b"dashboard is off: set BOB_STREAM_TOKEN or a TOKEN_NAME (8+ characters) in .env", "text/plain")
                     return False
-                given = query.get("token", [""])[0]
-                if not hmac.compare_digest(given.encode(), server.token.encode()):
-                    self._send(401, b"unauthorized", "text/plain")
-                    return False
-                return True
+                self.user = self._who(query, strong=True)
+                return self.user is not None
 
             def _json(self, obj, code=200):
                 self._send(code, json.dumps(obj).encode(), "application/json")
@@ -226,7 +259,7 @@ class StreamServer:
                     return self._json({"error": "bad request"}, 400)
                 try:
                     if url.path == "/api/cmd":
-                        return self._json({"output": server.run_command(body.get("cmd", ""))})
+                        return self._json({"output": server.run_command(body.get("cmd", ""), by=self.user)})
                     if url.path == "/api/drive":
                         left = max(-1.0, min(1.0, float(body.get("left", 0))))
                         right = max(-1.0, min(1.0, float(body.get("right", 0))))
@@ -252,7 +285,7 @@ class StreamServer:
                 if not self._authorized(query):
                     return self._send(401, b"unauthorized", "text/plain")
                 if url.path in ("/", "/index.html"):
-                    q = f"?token={query['token'][0]}" if server.token else ""
+                    q = f"?token={quote(query['token'][0])}" if server.policy.configured else ""
                     return self._send(200, (PAGE % {"q": q}).encode(), "text/html; charset=utf-8")
                 if url.path == "/snapshot.jpg":
                     frame = server.hub.get()
@@ -311,14 +344,14 @@ class StreamServer:
                 super().handle_error(request, client_address)
 
         host = self.cfg.host
-        if not self.token and host not in ("127.0.0.1", "localhost", "::1"):
+        if not self.policy.configured and host not in ("127.0.0.1", "localhost", "::1"):
             # A camera must not be open to the whole network by accident: no password means this robot only.
-            log.warning("No BOB_STREAM_TOKEN set, so the camera stream is limited to this Pi (reach it with an SSH "
-                        "tunnel). Set BOB_STREAM_TOKEN in .env to make it available on your network.")
+            log.warning("No dashboard token is set, so the camera stream is limited to this Pi (reach it with an SSH "
+                        "tunnel). Set BOB_STREAM_TOKEN, or TOKEN_NAME lines, in .env to make it available on your network.")
             host = "127.0.0.1"
         self._httpd = Server((host, self.cfg.port), Handler)
         threading.Thread(target=self._httpd.serve_forever, name="stream", daemon=True).start()
-        auth = " (token required)" if self.token else " (this Pi only, no password)"
+        auth = " (token required)" if self.policy.configured else " (this Pi only, no password)"
         log.info("Camera stream on %s:%d%s", host, self.cfg.port, auth)
 
     def stop(self) -> None:

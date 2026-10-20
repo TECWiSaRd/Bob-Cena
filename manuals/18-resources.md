@@ -24,6 +24,9 @@ Everything is in the project folder (`~/bob` on the Pi).
 | `console.py` | the text screen | [03](03-console.md) |
 | `selfcheck.py` | the `/check` report | [03](03-console.md) |
 | `tags.py`, `tag_tools.py` | room tags: finding them in the camera picture, and printing them | [19](19-home-assistant.md) |
+| `power.py`, `install_power.sh` | powering the Pi off (`/shutdown`) and the one-line permission it needs | [21](21-powering-off.md) |
+| `access.py` | per-person dashboard tokens tied to Wi-Fi networks | [07](07-camera-stream-and-dashboard.md) |
+| `remote.py`, `install_remote.sh` | the shared console (server, the `bob-console` viewer, and its installer) | [20](20-shared-console.md) |
 | `home.py` | the Home Assistant lights and Bob's room | [19](19-home-assistant.md) |
 | `timeline.py`, `index.py` | the event record and its search index | [14](14-memory-and-people.md) |
 | `tests/` | automatic checks for the safety-critical code | the README, "Tests" |
@@ -100,6 +103,7 @@ Everything is in the project folder (`~/bob` on the Pi).
 
 | Want to... | Type |
 |---|---|
+| Power the Pi off | `/shutdown`, then `/shutdown confirm` |
 | **Stop everything** | **Space** (empty line), or `/estop` |
 | Let Bob move again after a stop | `/clear`, then `/resume` |
 | Stop him thinking (and spending) | `/pause` |
@@ -111,7 +115,10 @@ Everything is in the project folder (`~/bob` on the Pi).
 | See what he remembers | `/notes`, `/people` |
 | Tell him which room he's in | `/where kitchen` |
 | Test a room tag | `/tags` |
+| Set how close a tag must be | `/tags min` (facing a tag, at the farthest distance you want) |
 | Make him look for his room | `/locate` |
+| See who's attached | `/who` |
+| See which dashboard tokens work here | `/access` |
 | Find anything he recorded | `/search lens covered` |
 | Turn the camera off | `/camera off` |
 | Silence him | `/mute` |

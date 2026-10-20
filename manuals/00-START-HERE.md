@@ -35,6 +35,8 @@ This folder has one manual for each part of Bob. Each manual is written so you c
 | 17 | [Troubleshooting](17-troubleshooting.md) | fix something that isn't working |
 | 18 | [Resources](18-resources.md) | find links, file lists, parts info and cheat sheets |
 | 19 | [Home Assistant](19-home-assistant.md) | let Bob turn the lights on and off in his room |
+| 20 | [Shared console](20-shared-console.md) | let friends with their own Pi login use the same console |
+| 21 | [Powering off](21-powering-off.md) | shut the Pi down safely, from the console or the dashboard |
 
 Two more guides live in the main project folder:
 - [TRAINING_HEY_BOB.md](../TRAINING_HEY_BOB.md): training a better "Hey Bob" wake word.
@@ -44,7 +46,7 @@ Two more guides live in the main project folder:
 
 ## If you're running Bob but didn't build him
 
-You don't need to read all twenty manuals. Read this page, then [the console](03-console.md) and
+You don't need to read all twenty-two manuals. Read this page, then [the console](03-console.md) and
 [Safety](16-safety.md) (about fifteen minutes in total). Use the rest when you need them.
 
 **What to ask the owner for first:**
@@ -115,7 +117,9 @@ motor battery.
    `/say hello`.
 5. **Let him go:** put him on the floor, keep a finger near the **Space bar** (emergency stop), and type
    `/resume`.
-6. **Walk away safely:** type `/pause` first, or `/quit` to shut him down. In tmux, `Ctrl-B` then `D`
+6. **Walk away safely:** type `/pause` first, or `/quit` to shut him down. To power the Pi itself off, use
+   `/shutdown` then `/shutdown confirm` (or the dashboard button), and never just pull the plug. See
+   [Powering off](21-powering-off.md). In tmux, `Ctrl-B` then `D`
    leaves Bob running while you disconnect.
 
 ## The three things to remember

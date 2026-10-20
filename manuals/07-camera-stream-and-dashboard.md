@@ -144,6 +144,50 @@ works as before).
 
 To switch it off: `dashboard = false` under `[stream]`.
 
+**Shut down the Pi.** At the bottom of the page there's a **Shut down the Pi** button. It asks you to confirm,
+and then Bob stops, says goodbye, and the Pi powers off. Nobody can switch it back on from a distance. Every
+dashboard user can do this by default; see [Powering off](21-powering-off.md) to change that.
+
+### Several people, each with their own token, tied to a Wi-Fi network
+
+If friends use Bob in their own homes, give each person their own token and say which Wi-Fi network it
+belongs to. A token **only works while Bob is connected to that network**, so a token you gave to Kai for
+Kai's house is dead everywhere else, and so are the tokens for other houses. Your own
+`BOB_STREAM_TOKEN` keeps working on every network.
+
+In `.env` on the Pi (one line per token, then one line per network):
+
+```
+BOB_STREAM_TOKEN=your-own-long-secret       # you: works on every network
+TOKEN_KAI=a-long-secret-for-kai             # a person. What follows TOKEN_ is their name
+TOKEN_SAM=a-long-secret-for-sam
+WIFI[Kai's House]=KAI                       # while Bob is on this Wi-Fi, Kai's token works
+WIFI[Sam Home]=SAM
+```
+
+- **The Wi-Fi name is written exactly as the network shows it**, including capitals, spaces and
+  apostrophes, inside the square brackets.
+- **Two people at the same house:** use two lines with the same network name (`WIFI[Our House]=KAI` and
+  `WIFI[Our House]=SAM`).
+- **Each token must be at least 8 characters** (aim for 16 or more). A shorter one is ignored, with a
+  warning in the log.
+- Everyone opens `http://bob:8080/dash?token=<their own token>` on their own phone. Several people can use it
+  at once.
+- **Commands are recorded under their name** (`kai`, `sam`, or `owner` for your token) in the timeline.
+- **Check it:** `/access` shows the Wi-Fi network Bob is on and which names work on it right now. It never
+  prints a token.
+- **After changing `.env`, restart Bob.** Moving Bob to another Wi-Fi changes who can get in within about ten
+  seconds, with no restart.
+- On a network that isn't listed, only your own token works. If Bob has no Wi-Fi at all (plugged in by
+  cable), the same applies.
+- **Wrong guesses are slowed down:** after 8 wrong tokens in a minute, that device is refused for the rest of
+  the minute (even with the right token). Ask the person to wait a minute.
+
+**What this does and doesn't do.** It limits *where* a token works, which is handy and limits the damage if a
+token leaks. It does **not** replace the token: a Wi-Fi name isn't secret, so the token is still what proves
+who someone is. It also doesn't make plain `http` private: on a shared network a determined person nearby
+could still see a token as it travels, so use Tailscale when it matters.
+
 ---
 
 ## Troubleshooting

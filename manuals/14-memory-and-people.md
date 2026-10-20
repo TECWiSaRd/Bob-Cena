@@ -75,7 +75,7 @@ did: useful for tuning, and for working out what went wrong after an incident. I
 Turn it on with `/timeline on` (or `enabled = true` under `[timeline]`). While on, it writes:
 - **`logs/timeline/YYYY-MM-DD.jsonl`**: one line per event. `tick` (a thinking round, with the distance
   reading), `tool` (what Claude asked for, the result, and why a move stopped), `operator` (messages and `/ask`),
-  `operator_command` (every other `/command` you or the dashboard run: `/pause`, `/motion off`, `/speed`, `/fwd`,
+  `operator_command` (every other `/command` you or a friend on the shared console runs, with their name in `by`: `/pause`, `/motion off`, `/speed`, `/fwd`,
   `/find` and so on), `manual_move` (the start of each burst of hand-driving with the keys or the dashboard pad),
   `stop` (the obstacle reflex), `estop` (an emergency stop and its source), `home` (a light change: who
   asked, which room, how many lights).

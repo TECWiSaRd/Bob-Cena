@@ -108,8 +108,11 @@ Commands start with `/`. Type `/help` in the console for a short list.
 |---|---|
 | `/check` | one report on whether he's ready: motors, camera (takes a picture), speaker, microphone, distance sensor, stream, Claude key, music, radio, **temperature, power supply, disk space, memory and Wi-Fi**. Each line is `ok`, `WARN`, `FAIL` or `off`. It moves nothing and costs nothing |
 | `/timeline` | the event record (below). `/timeline on`, `off`, `show 20`, `clear` |
+| `/access` | the Wi-Fi network Bob is on and which dashboard tokens work on it right now (never shows a token). See [Camera, stream and dashboard](07-camera-stream-and-dashboard.md) |
+| `/who` | who is attached to the shared console, and as what (operator or viewer). See [Shared console](20-shared-console.md) |
 | `/home` | the lights in Bob's room through Home Assistant: `/home on 40`, `/home off`, `/home check`, `/home ai off`. See [Home Assistant](19-home-assistant.md) |
 | `/locate [seconds]` | Bob turns slowly on the spot until he sees a room tag, then says which room he's in. `/locate off` stops. It moves him, so it obeys `/motion off` and the emergency stop |
+| `/tags min [px\|reset]` | stand him at the farthest distance a tag should count, facing it, and he measures it and sets the minimum size. See [Home Assistant](19-home-assistant.md) |
 | `/tags` | shows which room tags the camera can see right now (use it to test where a tag works) |
 | `/where [room]` | which room Bob thinks he's in; `/where kitchen` tells him, `/where clear` goes back to automatic |
 | `/search WORDS` | finds anything Bob has recorded: `/search lens covered`, `/search kind:estop since:2d`. See [Memory and people](14-memory-and-people.md) |
@@ -128,6 +131,7 @@ Run `/check` first whenever you start Bob, and whenever something seems wrong.
 | `/think on` / `/think off` | the same as `/resume` / `/pause` |
 | `/step` | one thinking round while paused. Handy for testing |
 | `/quit` (or `/exit`) | shuts Bob down cleanly |
+| `/shutdown` | powers the **Pi** off, in two steps: `/shutdown`, then `/shutdown confirm` within 30 s (`/shutdown cancel` to stop). Nobody can switch it back on from a distance. See [Powering off](21-powering-off.md) |
 
 ### Driving by hand
 

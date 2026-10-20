@@ -417,6 +417,22 @@ through a small SQLite index in `logs/index.db`, for example `/search kind:estop
 only new records, follows deletions (`/timeline clear` removes the matching rows), and can be rebuilt any
 time with `/index rebuild`. With `/index ai on`, Claude can search his own past too (off by default).
 
+## Powering the Pi off
+
+`/shutdown` then `/shutdown confirm` (or the dashboard's **Shut down the Pi** button) stops Bob cleanly and
+powers the Pi off. It takes two steps by the same person, Claude has no way to do it, and nobody can switch
+the Pi back on from a distance (someone has to unplug and replug the power). Owners, shared-console operators
+and dashboard users may by default; watch-only users may not (`[power] who`). If `/check` says the account
+isn't allowed to power off without a password, run `./install_power.sh` once. See `manuals/21-powering-off.md`.
+
+## Shared console (friends with a Pi login)
+
+`./install_remote.sh` lets friends who have their own login on the Pi type `bob-console` and use the same
+console you do, without getting a shell on your account. Who may do what comes from Linux groups: you (the
+owner) can do everything, `bobops` members can run commands except `/quit`, and `bobview` members can only
+watch and press the emergency stop. Every command is recorded under the person's name, and `/who` shows who is
+attached. See `manuals/20-shared-console.md`.
+
 ## Home Assistant (lights)
 
 With Home Assistant on your network, Bob can turn the lights on or off in the room he's in, for example when
@@ -466,6 +482,11 @@ talk to Bob, and the live log with the status line.
 - **It needs a password.** Set `BOB_STREAM_TOKEN` (8+ characters) in `.env`. Without one the dashboard
   stays off (the camera page behaves as before). Use it over Tailscale, which encrypts the connection;
   on plain Wi-Fi the password travels unencrypted.
+- **Several people, each with their own token, tied to a Wi-Fi network.** Add lines like `TOKEN_KAI=...` and
+  `WIFI[Kai's House]=KAI` to `.env`: Kai's token then works only while Bob is on that Wi-Fi, so friends' tokens
+  are dead at everyone else's house. Your own `BOB_STREAM_TOKEN` works everywhere. Commands are recorded under
+  each person's name, wrong guesses are locked out, and `/access` shows what works right now. See
+  `manuals/07-camera-stream-and-dashboard.md`.
 - It can only run a fixed list of commands: stop, pause/resume, follow, mute, camera, speed, trim, say, ask,
   motion, radio, listen, range, goal. It can't quit Bob, wipe his memory or start a calibration.
 - Hold-to-drive sends a short pulse every quarter second; let go (or lose signal) and the wheels stop by

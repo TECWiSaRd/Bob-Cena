@@ -11,7 +11,7 @@ do from the console is saved in **`tuning.json`**.
 
 1. The built-in default (in `config.py`).
 2. `config.toml`. Anything you leave out uses the default.
-3. `tuning.json` on the Pi, for `left_trim`, `right_trim`, `dc_min_duty` and calibration results.
+3. `tuning.json` on the Pi, for `left_trim`, `right_trim`, `dc_min_duty`, `tag_min_px` and calibration results.
 4. Console commands such as `/speed` or `/model`, until Bob restarts.
 
 **Editing `config.toml`:**
@@ -215,6 +215,29 @@ See [Home Assistant](19-home-assistant.md).
 | `cooldown_s` | 30.0 | the least time between changes to the same room |
 | `dark_below`, `bright_above` | 40.0, 90.0 | camera brightness (0-255) cut-offs for "dark" and "bright" |
 
+## `[power]`: powering the Pi off
+
+See [Powering off](21-powering-off.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | true | allow `/shutdown` (two steps; Claude cannot do it) |
+| `who` | `["owner", "operator", "dashboard"]` | which kinds of user may: `owner` (the console), `operator` (shared console), `dashboard` (anyone with a token), `viewer` (watch-only shared console) |
+| `confirm_seconds` | 30.0 | how long you have to type `/shutdown confirm` |
+
+## `[remote]`: shared console
+
+See [Shared console](20-shared-console.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | false | open the shared console (also run `./install_remote.sh` once) |
+| `socket` | `"/tmp/bob-console.sock"` | where it listens |
+| `operators` | `["bobops"]` | Linux groups whose members may run commands |
+| `viewers` | `["bobview"]` | Linux groups that may only watch (and press the emergency stop) |
+| `deny` | `["quit"]` | commands only the owner (the account Bob runs as) may run |
+| `max_clients` | 4 | how many people may be attached at once |
+
 ## `[index]`: search index
 
 See [Memory and people](14-memory-and-people.md).
@@ -255,6 +278,8 @@ On the Pi only, readable only by you. Edit with `nano ~/bob/.env`, then restart 
 | `ANTHROPIC_API_KEY=` | **required**: your Claude API key |
 | `BOB_STREAM_TOKEN=` | a password for the video page; needed (8+ characters) for the dashboard |
 | `HA_TOKEN=` | Home Assistant lights: a long-lived access token (see [Home Assistant](19-home-assistant.md)) |
+| `TOKEN_NAME=` | a dashboard token for one person (8+ characters), such as `TOKEN_KAI=...` |
+| `WIFI[Network name]=NAME` | which person's token works while Bob is on that Wi-Fi, such as `WIFI[Kai's House]=KAI` |
 | `BOB_RADIO_SECRET=` | the radio link to John (16+ characters, identical on both robots) |
 
 `BOB_AIRPLAY_PASSWORD` isn't in `.env`: it's given to `install_music.sh` when you run it.
@@ -267,6 +292,7 @@ Written by Bob on the Pi. You don't normally edit it.
 |---|---|---|
 | `left_trim`, `right_trim` | `/trim`, `/calibrate straight` | -0.5 to 0.5 |
 | `dc_min_duty` | `/minduty` | 0 to 0.9 |
+| `tag_min_px` | `/tags min` | 15 to 400 (overrides `[home] tag_min_px`; `/tags min reset` removes it) |
 | `calibration` | `/calibrate turn` | measured turn rates and the speed cap they were measured at |
 
 Delete `tuning.json` to go back to the `config.toml` values. If it's damaged, Bob ignores it and logs a warning.

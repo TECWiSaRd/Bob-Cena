@@ -169,6 +169,23 @@ class HomeConfig:
 
 
 @dataclass
+class PowerConfig:
+    enabled: bool = True         # people can power the Pi off with /shutdown (two steps; Claude cannot). Needs ./install_power.sh unless sudo is already open
+    who: list = field(default_factory=lambda: ["owner", "operator", "dashboard"])   # which kinds of user: owner, operator (shared console), viewer (shared console), dashboard
+    confirm_seconds: float = 30.0   # /shutdown confirm must follow within this time
+
+
+@dataclass
+class RemoteConfig:
+    enabled: bool = False        # a shared console: friends with a Pi login attach with `bob-console` (see manual 20)
+    socket: str = "/tmp/bob-console.sock"
+    operators: list = field(default_factory=lambda: ["bobops"])   # Linux groups whose members may run commands
+    viewers: list = field(default_factory=lambda: ["bobview"])    # Linux groups that may only watch (and press the emergency stop)
+    deny: list = field(default_factory=lambda: ["quit"])          # commands only the owner may run
+    max_clients: int = 4
+
+
+@dataclass
 class IndexConfig:
     enabled: bool = True         # a searchable index of the timeline, notes, people, radio, warnings and manuals (/search)
     interval_s: float = 5.0      # how often it reads new records
@@ -208,6 +225,8 @@ class Config:
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
     index: IndexConfig = field(default_factory=IndexConfig)
     home: HomeConfig = field(default_factory=HomeConfig)
+    remote: RemoteConfig = field(default_factory=RemoteConfig)
+    power: PowerConfig = field(default_factory=PowerConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 

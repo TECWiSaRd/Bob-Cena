@@ -209,6 +209,15 @@ class HomeWithTags(unittest.TestCase):
             cfg = config.HomeConfig(enabled=True, rooms=["Kitchen"], tags=tags)
             self.assertFalse(Home(cfg, TOKEN).enabled)
 
+    def test_a_tag_room_written_as_an_area_id_still_matches(self):
+        cfg = config.HomeConfig(enabled=True, url="http://127.0.0.1:9", rooms=["adams_room"], tags={"3": "Adam's Room"})
+        h = Home(cfg, TOKEN)
+        h.tracker = TagTracker(cfg, lambda: self.t[0])
+        self.moved = [0.0]
+        h.moved = lambda: self.moved[0]
+        self.confirm(h, 3)
+        self.assertEqual(h.where()[0], "adams_room")
+
     def test_status_names_the_source(self):
         h = self.home()
         self.confirm(h, 1)
@@ -399,6 +408,113 @@ class ThroughTheRobot(unittest.TestCase):
 
     def test_claude_is_told_about_the_tool_when_room_unknown(self):
         self.assertIn("find_my_room", self.ctrl.brain._status([], False))
+
+
+class FakeScanner:
+    """Stands in for the tag scanner: every look returns the next list of tags."""
+
+    def __init__(self, looks):
+        self.looks, self.problem = list(looks), ""
+        self.camera = type("Cam", (), {"grab_bgr": lambda s: object()})()
+        self.detector = type("Det", (), {"detect": lambda d, f: self.looks.pop(0) if self.looks else []})()
+
+    def stop(self):
+        pass
+
+
+class MeasureTests(unittest.TestCase):
+    def home_with(self, looks):
+        home = Home(config.HomeConfig(enabled=True, rooms=["Kitchen"], tags={"1": "Kitchen"}), TOKEN)
+        home.scanner = FakeScanner(looks)
+        return home
+
+    def test_takes_the_middle_of_the_readings(self):
+        sizes = [58, 60, 61, 59, 60, 62, 60, 59, 61, 60, 90, 30]          # two odd readings are ignored by the median
+        size, text = self.home_with([[Tag(1, s, 0.5)] for s in sizes]).measure_tag(sleep=lambda s: None)
+        self.assertAlmostEqual(size, 60, delta=2)
+        self.assertIn("Measured tag 1", text)
+
+    def test_refuses_if_the_tag_is_rarely_seen(self):
+        looks = [[Tag(1, 60, 0.5)]] + [[]] * 11
+        size, text = self.home_with(looks).measure_tag(sleep=lambda s: None)
+        self.assertIsNone(size)
+        self.assertIn("only 1 of 12", text)
+
+    def test_refuses_if_several_tags_keep_changing(self):
+        looks = [[Tag(i % 3, 60, 0.5)] for i in range(12)]
+        size, text = self.home_with(looks).measure_tag(sleep=lambda s: None)
+        self.assertIsNone(size)
+        self.assertIn("aim him at just one", text)
+
+    def test_without_a_scanner_it_explains(self):
+        home = Home(config.HomeConfig(enabled=True, rooms=["Kitchen"], tags={"1": "Kitchen"}), TOKEN)
+        self.assertIsNone(home.measure_tag()[0])
+
+
+class SavedMinimum(unittest.TestCase):
+    def setUp(self):
+        import bob
+        self.bob = bob
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.old = bob.TUNING
+        bob.TUNING = Path(self.dir.name) / "tuning.json"          # never touch the real tuning.json
+        self.addCleanup(setattr, bob, "TUNING", self.old)
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        os.environ["HA_TOKEN"] = TOKEN
+
+    def robot(self):
+        cfg = config.Config()
+        cfg.stream.enabled = False
+        cfg.home = config.HomeConfig(enabled=True, url="http://127.0.0.1:9", rooms=["Kitchen"], tags={"1": "Kitchen"})
+        ctrl = self.bob.Controller(cfg, sim=True, paused=True)
+        self.addCleanup(ctrl.shutdown)
+        return ctrl
+
+    def test_measured_value_is_ninety_percent_and_survives_a_restart(self):
+        ctrl = self.robot()
+        ctrl.home.scanner = FakeScanner([[Tag(1, 60, 0.5)]] * 12)
+        real = ctrl.home.measure_tag
+        ctrl.home.measure_tag = lambda: real(sleep=lambda s: None)
+        text = ctrl.handle("/tags min")
+        self.assertIn("Minimum set to 54 px", text)
+        self.assertEqual(ctrl.cfg.home.tag_min_px, 54)
+        self.assertEqual(ctrl.home.cfg.tag_min_px, 54)                 # the live setting the tracker reads
+        self.assertEqual(self.bob.json.loads(self.bob.TUNING.read_text())["tag_min_px"], 54)
+        again = self.robot()                                           # a restart reads it back
+        self.assertEqual(again.cfg.home.tag_min_px, 54)
+
+    def test_typed_values_are_limited_and_reset_goes_back_to_config(self):
+        ctrl = self.robot()
+        ctrl.handle("/tags min 5")
+        self.assertEqual(ctrl.cfg.home.tag_min_px, 15)
+        ctrl.handle("/tags min 9999")
+        self.assertEqual(ctrl.cfg.home.tag_min_px, 400)
+        ctrl.handle("/tags min 33")
+        self.assertIn("40 px", ctrl.handle("/tags min reset"))
+        self.assertEqual(ctrl.cfg.home.tag_min_px, 40)
+        self.assertNotIn("tag_min_px", self.bob.json.loads(self.bob.TUNING.read_text()))
+        self.assertIn("usage", ctrl.handle("/tags min banana"))
+        self.assertIn("usage", ctrl.handle("/tags nonsense"))
+
+    def test_saving_the_minimum_keeps_trims_and_calibration(self):
+        ctrl = self.robot()
+        ctrl.handle("/trim left 0.05")
+        ctrl.handle("/tags min 50")
+        ctrl.handle("/minduty 0.3")
+        data = self.bob.json.loads(self.bob.TUNING.read_text())
+        self.assertEqual((data["left_trim"], data["dc_min_duty"], data["tag_min_px"]), (0.05, 0.3, 50))
+
+    def test_bad_saved_values_are_ignored(self):
+        for bad in ("big", True, None, [1]):
+            self.bob.TUNING.write_text(self.bob.json.dumps({"tag_min_px": bad}))
+            self.assertEqual(self.robot().cfg.home.tag_min_px, 40, bad)
+
+    def test_it_will_not_measure_while_moving(self):
+        ctrl = self.robot()
+        ctrl.drive.start(0.5, 0.5, 1.0)
+        self.assertIn("hold still", ctrl.handle("/tags min"))
+        ctrl.drive.stop()
 
 
 class DriveCounts(unittest.TestCase):

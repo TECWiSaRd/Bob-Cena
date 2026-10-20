@@ -65,6 +65,8 @@ Each part's own manual has more detail.
 | Bob says he can't see, camera works | `/camera on` (it may be switched off) |
 | Stream page asks for a password, or says `unauthorized` | add `?token=<BOB_STREAM_TOKEN>` to the address |
 | Dashboard "is off" | `BOB_STREAM_TOKEN` missing or under 8 characters |
+| A friend's token says `unauthorized` | `/access` shows the Wi-Fi network Bob is on and which names work there. The network name in `.env` must match exactly (`WIFI[Kai's House]=KAI`). Restart Bob after editing `.env` |
+| `too many wrong tries: wait a minute` | that device guessed wrong 8 times in a minute: wait a minute |
 
 ## Voice and sound
 
@@ -127,11 +129,31 @@ Each part's own manual has more detail.
 | `Home Assistant disabled: ...` at startup | the message says what's missing: usually `HA_TOKEN` in `.env`, or `rooms` |
 | `can't reach Home Assistant` | check `url` (try the IP address) from the Pi: `curl http://<address>:8123` |
 | `I don't know which room I'm in` | `/where <room>`, or fix the room sensor |
+| He reads the tag from the next room through a door | stand him where he should NOT count it and look at `/tags`; then run `/tags min` at the farthest spot he SHOULD count it, or raise the number |
 | `/locate` finds nothing | stand him where a tag is in view, check height and size with `/tags` (manual 19) |
 | `/tags` shows nothing | see "Room tags" in [Home Assistant](19-home-assistant.md): height, size, glare, and `tag_min_px` |
 | He won't turn lights on | quiet hours, the 30 s cooldown, or `/home ai off`: the message says which |
 
 More in [Home Assistant](19-home-assistant.md).
+
+## Shared console
+
+| Problem | Fix |
+|---|---|
+| A friend gets `... isn't allowed` | `./install_remote.sh --add NAME` (or `--add NAME --view`) |
+| `bob-console: command not found` | run `./install_remote.sh` on the Pi |
+| `Bob isn't running, or the shared console is off` | start Bob; `enabled = true` under `[remote]` |
+
+More in [Shared console](20-shared-console.md).
+
+## Powering off
+
+| Problem | Fix |
+|---|---|
+| `can't power off: this account isn't allowed ...` | run `./install_power.sh` on the Pi |
+| `type /shutdown first, then /shutdown confirm` | the 30 seconds ran out, or someone else made the request: start again |
+
+More in [Powering off](21-powering-off.md).
 
 ## Music and radio
 

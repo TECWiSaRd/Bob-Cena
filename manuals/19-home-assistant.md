@@ -74,8 +74,10 @@ location_entity = "sensor.bob_area"     # see below; leave empty for now to use 
 ```
 
 `rooms` are the **areas** you've set up in Home Assistant (Settings → Areas). Bob controls the `light.*`
-entities assigned to each area, either directly or through their device. Use the area's name exactly as
-Home Assistant shows it. Use an IP address for `url` if `homeassistant.local` doesn't resolve from the Pi.
+entities assigned to each area, either directly or through their device. You can write each area by its
+**name** ("Adam's Room") or its **ID** (`adams_room`): Home Assistant accepts either, and Bob treats them as
+the same room (apostrophes, capitals and spaces are ignored when he compares names). The room sensor, the
+tags and `/where` can use either form too. Use an IP address for `url` if `homeassistant.local` doesn't resolve from the Pi.
 
 ### 4. Restart Bob and test
 
@@ -143,6 +145,23 @@ Matt paper or a matt laminate is better than glossy, which reflects the lights.
   Bob's room now: Living Room (seen on room tag 2)
 ```
 If it says "ignored: too small", he's too far away. Move him closer, or print a bigger tag.
+
+**5. Set the distance from a real measurement (recommended).** Instead of working out `tag_min_px` from a
+table, let Bob measure it:
+
+1. Put Bob **at the farthest distance** from the tag at which you still want it to count, facing it. Use the
+   real doorway spot: where he'd be when he should know the room.
+2. Hold him still and type `/tags min`.
+
+```
+Measured tag 1: 52 px wide (median of 11 looks, range 51 to 53).
+Minimum set to 47 px (90% of that) and saved: tags that look smaller, meaning further away, are ignored.
+```
+He takes 12 looks over about a second and a half, uses the middle reading, sets the limit to 90% of it so that
+spot reliably counts, and saves it (it survives restarts; it's stored in `tuning.json`, which overrides
+`config.toml`). If he sees the tag in too few looks, or keeps seeing different tags, he says so and changes
+nothing. Aim him straight at one well-lit tag. You can also type a value (`/tags min 45`) or go back to the
+`config.toml` value with `/tags min reset`.
 
 **How far away does a tag work?** A tag is only believed if it looks at least `tag_min_px` (40) pixels wide.
 With a 10 cm tag and a typical 62-degree camera that's about 1.3 metres, and about 2 metres for a 15 cm tag.
@@ -231,6 +250,7 @@ All in `[home]`. See also [Settings reference](15-settings-reference.md).
 | `/home check` | is Home Assistant reachable, and does he know his room? |
 | `/home ai on` / `off` | let Claude use the lights, or take them away |
 | `/locate [seconds]` | Bob turns slowly on the spot until he sees a room tag. `/locate off` stops |
+| `/tags min` | measure the tag in front of him and set how big a tag must look to count (see step 5). Also `/tags min 45` and `/tags min reset` |
 | `/tags` | which room tags the camera sees right now, how big they look, and what room he's in |
 | `/where` | which room he thinks he's in, and why |
 | `/where kitchen` / `/where clear` | tell him, or go back to automatic |

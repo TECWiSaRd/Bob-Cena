@@ -15,6 +15,7 @@ manual gathers every safety feature in one place, and gives a checklist for runn
 | Physical button | on Bob (optional) | same as Space | wire one to GPIO26 ([manual 01](01-hardware-and-wiring.md)) |
 | `/pause` | console or dashboard | Claude's thinking, the current request, the wheels, following | not a lock: you can still drive by hand |
 | Say "stop" | microphone | the wheels, following, the AI | **only works while he's standing still** |
+| `/shutdown` then `/shutdown confirm` | console, shared console, dashboard button | everything: Bob quits cleanly and the Pi powers off. **It cannot be switched back on from a distance** | two steps, by the same person |
 | Pull the motor battery | on Bob | all motor power | the last resort; always works |
 
 **What the emergency stop does:**
@@ -101,11 +102,13 @@ Then put him on the floor and type `/resume`.
 |---|---|---|
 | The console | anyone who can SSH into the Pi | your Pi password; Tailscale |
 | The video stream | only the Pi itself, until you set `BOB_STREAM_TOKEN`; then anyone with the password | `BOB_STREAM_TOKEN` |
-| The dashboard | only with the password | 8+ character `BOB_STREAM_TOKEN`; use it over Tailscale |
+| The dashboard | only with a token | `BOB_STREAM_TOKEN` (yours), or a personal `TOKEN_NAME` that only works on its own Wi-Fi network; 8+ characters; wrong guesses are locked out; use it over Tailscale |
 | Bluetooth pairing | only during `/music pair` (2 minutes) | `/music forget` old phones |
 | AirPlay | everyone on your Wi-Fi, by default | `BOB_AIRPLAY_PASSWORD` when installing |
 | The radio | only a robot with the shared secret | `BOB_RADIO_SECRET` |
 | Home Assistant | anyone with `HA_TOKEN` | token only in `.env`; Bob can only switch lights, only in listed rooms, only the room he's in, with quiet hours, a cooldown and a rate limit; `/home ai off` |
+| Powering the Pi off | owners, operators and dashboard users (not viewers) | two steps by the same person; Claude has no way to do it; `[power] who` |
+| The shared console | members of the `bobops` / `bobview` groups | Linux identifies each person; no shell; operators can't `/quit`; viewers can only watch and press the emergency stop; everything is recorded by name |
 | The search index | anyone who can log in to the Pi | it holds copies of notes, people and timeline text; it follows deletions; `enabled = false` turns it off |
 | Claude searching his history | only if `/index ai on` | off by default; timeline and radio records only, shown to him as data |
 | The timeline (if on) | anyone who can log in to the Pi | off by default; `thumbnails = false`; `/timeline clear` |

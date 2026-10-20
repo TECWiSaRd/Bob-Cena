@@ -27,7 +27,9 @@ UNKNOWN_STATES = {"", "unknown", "unavailable", "none", "not_home", "away"}
 
 
 def slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(text).lower()).strip("_")
+    """A room name or Home Assistant area ID in one comparable form. Apostrophes are dropped, as Home Assistant
+    does when it makes an area ID, so "Adam's Room" and adams_room are the same room."""
+    return re.sub(r"[^a-z0-9]+", "_", re.sub(r"['\u2019\u2018`]", "", str(text).lower())).strip("_")
 
 
 def parse_clock(text: str) -> tuple[int, int] | None:
@@ -230,6 +232,33 @@ class Home:
         lines.append(f"  Bob's room now: {room} ({why})" if room else f"  Bob's room now: unknown ({why or 'nothing to go on'})")
         return "\n".join(lines)
 
+    def measure_tag(self, looks: int = 12, gap: float = 0.12, sleep=time.sleep) -> tuple[float | None, str]:
+        """Watch the tag in front of the camera for a moment. Returns (typical width in pixels, a message about it)."""
+        scanner = self.scanner
+        if scanner is None or scanner.detector is None:
+            return None, scanner.problem if scanner and scanner.problem else "the tag scanner isn't running (are room tags set up?)"
+        seen: list[tuple[int, float]] = []
+        for _ in range(looks):
+            frame = scanner.camera.grab_bgr()
+            if frame is None:
+                return None, "no camera picture (is the camera on?)"
+            tags = scanner.detector.detect(frame)
+            if tags:
+                best = max(tags, key=lambda t: t.size_px)
+                seen.append((best.id, best.size_px))
+            sleep(gap)
+        if len(seen) < looks // 2:
+            return None, (f"saw a tag in only {len(seen)} of {looks} looks. Face him straight at one tag, hold him still, "
+                          "and make sure it is well lit")
+        ids = [i for i, _ in seen]
+        tag = max(set(ids), key=ids.count)
+        sizes = sorted(s for i, s in seen if i == tag)
+        if len(sizes) < looks // 2:
+            return None, "he keeps seeing different tags: aim him at just one"
+        median = sizes[len(sizes) // 2]
+        return median, (f"Measured tag {tag}: {median:.0f} px wide (median of {len(sizes)} looks, "
+                        f"range {sizes[0]:.0f} to {sizes[-1]:.0f}).")
+
     def set_manual(self, text: str) -> str:
         text = text.strip()
         if text.lower() in ("", "clear", "off", "auto"):
@@ -246,7 +275,9 @@ class Home:
         cached = self._lights.get(room)
         if cached and self._clock() - cached[0] < 60:
             return cached[1]
-        safe = room.replace("\\", "").replace("'", "").replace('"', "")      # a name in a template, not code
+        # The area name goes inside a quoted string in a template: escape it so it can only ever be text
+        # (an apostrophe in "Adam's Room" must still find that room, and nothing in a name can become code).
+        safe = "".join(c for c in room if c.isprintable()).replace("\\", "\\\\").replace("'", "\\'")
         out = self.client.template(
             "{{ area_entities('" + safe + "') | select('match', 'light[.]') | list | tojson }}")
         try:

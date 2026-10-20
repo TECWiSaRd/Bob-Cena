@@ -103,10 +103,13 @@ def run_checks(ctrl, base: Path, run=_run, read=_read, which=shutil.which) -> li
         add(OFF, "stream", "not running")
     else:
         host, port = st._httpd.server_address[:2]
-        if not st.token:
+        if not st.policy.configured:
             add(WARN, "stream", f"on {host}:{port}, this Pi only (set BOB_STREAM_TOKEN to use it from other devices)")
+        elif not st.policy.valid():
+            add(WARN, "stream", f"on {host}:{port}, but no token works on this Wi-Fi ({st.policy.wifi() or 'no Wi-Fi'}): see /access")
         else:
-            add(OK, "stream", f"on {host}:{port}, password protected; dashboard {'on' if st.dashboard_enabled else 'off'}")
+            add(OK, "stream", f"on {host}:{port}, password protected; dashboard {'on' if st.dashboard_enabled else 'off'}; "
+                              f"tokens that work now: {', '.join(sorted(st.policy.valid()))}")
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         add(FAIL, "claude", "no ANTHROPIC_API_KEY: Bob can move when driven, but can't think")
@@ -176,6 +179,23 @@ def run_checks(ctrl, base: Path, run=_run, read=_read, which=shutil.which) -> li
     if home is not None:
         level, detail = home.check()
         add(level, "home assistant", detail)
+
+    power = getattr(ctrl, "power", None)
+    if power is not None:
+        if not ctrl.cfg.power.enabled:
+            add(OFF, "power off", "disabled in config.toml")
+        else:
+            ok, why = power.capable()
+            add(OK if ok else WARN, "power off", f"/shutdown works ({why}); allowed for: {', '.join(ctrl.cfg.power.who)}" if ok else why)
+
+    remote = getattr(ctrl, "remote", None)
+    if remote is not None:
+        if not ctrl.cfg.remote.enabled:
+            add(OFF, "shared console", "off")
+        elif remote.problem:
+            add(WARN, "shared console", remote.problem)
+        else:
+            add(OK, "shared console", remote.describe())
 
     ix = getattr(ctrl, "index", None)
     if ix is not None:

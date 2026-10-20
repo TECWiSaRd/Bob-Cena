@@ -76,7 +76,7 @@ class FakeController:
     def __init__(self):
         self.ran = []
 
-    def handle(self, text):
+    def handle(self, text, by=None, role="owner"):
         self.ran.append(text)
         return "ok"
 
