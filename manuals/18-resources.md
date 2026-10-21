@@ -24,6 +24,7 @@ Everything is in the project folder (`~/bob` on the Pi).
 | `console.py` | the text screen | [03](03-console.md) |
 | `selfcheck.py` | the `/check` report | [03](03-console.md) |
 | `tags.py`, `tag_tools.py` | room tags: finding them in the camera picture, and printing them | [19](19-home-assistant.md) |
+| `gamepad.py` | driving with an Xbox controller | [22](22-xbox-controller.md) |
 | `power.py`, `install_power.sh` | powering the Pi off (`/shutdown`) and the one-line permission it needs | [21](21-powering-off.md) |
 | `access.py` | per-person dashboard tokens tied to Wi-Fi networks | [07](07-camera-stream-and-dashboard.md) |
 | `remote.py`, `install_remote.sh` | the shared console (server, the `bob-console` viewer, and its installer) | [20](20-shared-console.md) |
@@ -132,7 +133,7 @@ Everything is in the project folder (`~/bob` on the Pi).
 | `cd ~/bob` | goes to Bob's folder |
 | `tmux new -s bob` | starts a session that survives disconnecting |
 | `tmux attach -t bob` | reconnects to it |
-| `Ctrl-B`, then `D` | leaves tmux with Bob still running |
+| `Ctrl-B`, then `D` (or type `/detach`) | leaves tmux with Bob still running |
 | `tail -50 ~/bob/logs/bob.log` | the last 50 log lines |
 | `hostname -I` | shows the Pi's address |
 | `nano <file>` | edits a file (`Ctrl-O`, Enter to save; `Ctrl-X` to leave) |

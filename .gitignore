@@ -1,6 +1,7 @@
 # Secrets and private data (these live on the Pi only)
 .env
 tuning.json
+config.local.toml
 memory.json
 people.json
 music_duck.json

@@ -37,6 +37,7 @@ This folder has one manual for each part of Bob. Each manual is written so you c
 | 19 | [Home Assistant](19-home-assistant.md) | let Bob turn the lights on and off in his room |
 | 20 | [Shared console](20-shared-console.md) | let friends with their own Pi login use the same console |
 | 21 | [Powering off](21-powering-off.md) | shut the Pi down safely, from the console or the dashboard |
+| 22 | [Xbox controller](22-xbox-controller.md) | drive Bob with a game controller |
 
 Two more guides live in the main project folder:
 - [TRAINING_HEY_BOB.md](../TRAINING_HEY_BOB.md): training a better "Hey Bob" wake word.

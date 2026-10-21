@@ -256,7 +256,7 @@ watch from another device, set `BOB_STREAM_TOKEN=something-long` in `.env` and o
 ```bash
 ./install.sh --service
 sudo systemctl start bob
-tmux attach -t bob       # open the console; Ctrl-B then D to detach
+tmux attach -t bob       # open the console; Ctrl-B then D, or type /detach
 ```
 
 The service runs Bob inside a tmux session and restarts him if he crashes.
@@ -417,12 +417,18 @@ through a small SQLite index in `logs/index.db`, for example `/search kind:estop
 only new records, follows deletions (`/timeline clear` removes the matching rows), and can be rebuilt any
 time with `/index rebuild`. With `/index ai on`, Claude can search his own past too (off by default).
 
+## Xbox controller
+
+Set `[gamepad] enabled = true` (in `config.local.toml`), plug the controller in or pair it over Bluetooth, and restart
+Bob. **Start** switches manual driving on or off, the **left stick** drives, **B** is the emergency stop, **Y** hands
+control back to the AI. See `manuals/22-xbox-controller.md`.
+
 ## Powering the Pi off
 
 `/shutdown` then `/shutdown confirm` (or the dashboard's **Shut down the Pi** button) stops Bob cleanly and
 powers the Pi off. It takes two steps by the same person, Claude has no way to do it, and nobody can switch
-the Pi back on from a distance (someone has to unplug and replug the power). Owners, shared-console operators
-and dashboard users may by default; watch-only users may not (`[power] who`). If `/check` says the account
+the Pi back on from a distance (someone has to unplug and replug the power). Owners and shared-console operators
+may by default; dashboard users (off by default) and watch-only users may not (`[power] who`). If `/check` says the account
 isn't allowed to power off without a password, run `./install_power.sh` once. See `manuals/21-powering-off.md`.
 
 ## Shared console (friends with a Pi login)

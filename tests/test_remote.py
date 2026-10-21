@@ -172,6 +172,44 @@ class RemoteTests(unittest.TestCase):
         time.sleep(0.2)
         self.assertEqual(self.ctrl.handled, [])
 
+    def test_aliases_and_leading_spaces_cannot_dodge_the_deny_list(self):
+        op = self.connect()
+        for text in ("/exit", "  /quit", "\t/EXIT now"):
+            op.handle(text)
+        time.sleep(0.3)
+        self.assertEqual(self.ctrl.handled, [])
+
+    def test_nan_never_drives_the_wheels(self):
+        c = self.connect()
+        self.ctrl.drive_mode = True
+        c.sock.sendall(b'{"type":"manual","l":NaN,"r":Infinity}\n')
+        c.manual(0.5, 0.5, 0.6)                                                    # a good one after, to know both were read
+        self.assertTrue(wait_for(lambda: self.ctrl.manual_moves == [(0.5, 0.5)]))
+
+    def test_a_refused_extra_client_does_not_log_a_phantom_departure(self):
+        lines = []
+        self.logbuf.listeners.append(lambda lv, tag, line: lines.append(line))
+        for i in range(self.cfg.max_clients):
+            self.connect((OWNER_UID + 1, f"u{i}", {"bobops"}))
+        self.assertTrue(wait_for(lambda: len(self.server.clients) == self.cfg.max_clients))
+        extra = self.connect((OWNER_UID + 1, "extra", {"bobops"}))
+        self.assertTrue(wait_for(lambda: self.says(extra, "too many")))
+        time.sleep(0.3)
+        self.assertFalse([l for l in lines if "extra" in l])
+
+    def test_a_backlog_copy_survives_a_busy_log(self):
+        class Busy:
+            n = 0
+            listeners = []
+            @property
+            def lines(self_inner):
+                Busy.n += 1
+                if Busy.n < 3:
+                    raise RuntimeError("deque mutated during iteration")
+                return [(20, "x", "old line")]
+        self.server.logbuf = Busy()
+        self.assertEqual(self.server._backlog(), [(20, "x", "old line")])
+
     def test_manual_driving_only_in_drive_mode_and_clamped(self):
         c = self.connect()
         c.manual(1, 1, 0.6)

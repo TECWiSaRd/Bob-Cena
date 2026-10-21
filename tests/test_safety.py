@@ -24,6 +24,26 @@ class ConfigValidation(unittest.TestCase):
     def test_project_config_loads(self):
         config.load(Path(__file__).resolve().parent.parent / "config.toml")
 
+    def test_shipped_config_keeps_personal_and_network_features_off(self):
+        shipped = Path(__file__).resolve().parent.parent / "config.toml"
+        with tempfile.TemporaryDirectory() as d:                    # a copy, so a local override on this machine can't hide a change
+            (Path(d) / "config.toml").write_text(shipped.read_text())
+            cfg = config.load(Path(d) / "config.toml")
+        self.assertFalse(any([cfg.timeline.enabled, cfg.home.enabled, cfg.remote.enabled, cfg.index.ai]))
+        self.assertEqual(cfg.home.rooms, [])
+        self.assertNotIn("dashboard", cfg.power.who)
+
+    def test_config_local_toml_wins_and_is_checked_like_the_rest(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "config.toml").write_text("[home]\nurl = \"http://a:8123\"\n")
+            (Path(d) / "config.local.toml").write_text("[home]\nenabled = true\n")
+            cfg = config.load(Path(d) / "config.toml")
+            self.assertTrue(cfg.home.enabled)
+            self.assertEqual(cfg.home.url, "http://a:8123")
+            (Path(d) / "config.local.toml").write_text("[home]\nenabeld = true\n")
+            with self.assertRaisesRegex(ValueError, "unknown setting"):
+                config.load(Path(d) / "config.toml")
+
     def test_drive_type_typo_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "isn't one of"):
             load_toml('[drive]\ntype = "dcc"\n')

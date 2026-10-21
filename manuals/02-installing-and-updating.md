@@ -76,6 +76,16 @@ rsync -av --exclude '.venv' --exclude 'logs' --exclude '__pycache__' \
 | the `manuals/` folder | `memory.json` (Bob's notes), `people.json` |
 | `wakewords/` (your wake word model) | `logs/`, `captures/`, `voices/`, `models/`, `sounds/`, `.venv/` |
 
+**Your own settings go in `config.local.toml`** (next to `config.toml`). It is read after `config.toml`, wins over it, and
+is never committed to git, so the shared `config.toml` keeps its safe defaults (timeline, Home Assistant, shared console and
+the AI search all off). Copy only the lines you change, for example:
+
+```toml
+[home]
+enabled = true
+rooms = ["Kitchen"]
+```
+
 **Important:** if you change `config.toml` on the Pi, the next copy from the Mac replaces it. Make
 settings changes on the Mac, or make the same change in both places.
 
@@ -155,7 +165,7 @@ tmux new -s bob                       # a session that survives disconnects
 .venv/bin/python bob.py --paused      # start with the AI paused
 ```
 
-- **Leave Bob running and disconnect:** `Ctrl-B`, then `D`.
+- **Leave Bob running and disconnect:** `Ctrl-B`, then `D`, or type `/detach` in his console.
 - **Come back later:** `tmux attach -t bob`.
 - **Stop Bob:** type `/quit` in his console.
 

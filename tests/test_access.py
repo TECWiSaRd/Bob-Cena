@@ -3,6 +3,7 @@ import http.client
 import json
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -62,11 +63,16 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(current_wifi(lambda a, **k: "no:Other\n" if a[0] == "nmcli" else None))
 
 
+    def test_nmcli_escapes_are_decoded_in_one_pass(self):
+        out = "yes:a\\\\\\:b\n"                      # nmcli prints  a\\\:b   for the name  a\:b
+        self.assertEqual(current_wifi(lambda a, **k: out if a[0] == "nmcli" else None), "a\\:b")
+
+
 class PolicyTests(unittest.TestCase):
     def policy(self, ssid, clock=None):
         self.ssid = ssid
         tokens, wifi, problems = parse_env(ENV)
-        return AccessPolicy("owner-secret-1234", tokens, wifi, wifi_reader=lambda: self.ssid, clock=clock or Clock())
+        return AccessPolicy("owner-secret-1234", tokens, wifi, wifi_reader=lambda: self.ssid, clock=clock or Clock(), background=False)
 
     def test_a_token_works_only_on_its_own_network(self):
         p = self.policy("Kai's House")
@@ -100,6 +106,25 @@ class PolicyTests(unittest.TestCase):
         clock.t += 11
         self.assertIsNone(p.check("kai-secret-12345"))            # ...then re-read
         self.assertEqual(p.check("sam-secret-12345"), "sam")
+
+    def test_a_slow_wifi_lookup_does_not_hold_up_other_requests(self):
+        import threading
+        gate, calls, clock = threading.Event(), [], Clock()
+        def reader():
+            calls.append(1)
+            if len(calls) > 1:
+                gate.wait(5)
+            return "Kai's House"
+        p = AccessPolicy("owner-secret-1234", {"kai": "kai-secret-12345"}, {"Kai's House": ["kai"]},
+                         wifi_reader=reader, clock=clock)
+        self.assertEqual(p.check("kai-secret-12345"), "kai")           # the first look is waited for
+        clock.t += 11
+        t0 = time.monotonic()
+        self.assertEqual(p.check("kai-secret-12345"), "kai")           # stale answer, at once, while nmcli "hangs"
+        self.assertEqual(p.check("owner-secret-1234"), "owner")
+        self.assertLess(time.monotonic() - t0, 1.0)
+        self.assertEqual(len(calls), 2)                                # and only one lookup is running
+        gate.set()
 
     def test_a_failing_wifi_lookup_falls_back_to_owner_only(self):
         def boom():
@@ -207,7 +232,7 @@ class WebTests(unittest.TestCase):
         tokens, wifi, _ = parse_env(ENV)
         self.ssid = ssid
         self.clock = Clock()
-        return AccessPolicy("owner-secret-1234", tokens, wifi, wifi_reader=lambda: self.ssid, clock=self.clock)
+        return AccessPolicy("owner-secret-1234", tokens, wifi, wifi_reader=lambda: self.ssid, clock=self.clock, background=False)
 
     def test_only_the_token_for_this_network_opens_the_dashboard(self):
         srv = self.serve(self.policy("Kai's House"))
@@ -216,6 +241,28 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.get(srv, "/api/status?token=sam-secret-12345")[0], 401)
         self.assertEqual(self.get(srv, "/api/status")[0], 401)
         self.assertEqual(self.get(srv, "/dash?token=kai-secret-12345")[0], 200)
+
+    def test_a_running_stream_stops_when_bob_leaves_the_network(self):
+        import stream
+        stream.RECHECK_S = 0.05
+        self.addCleanup(setattr, stream, "RECHECK_S", 5.0)
+        policy = self.policy("Kai's House")
+        srv = self.serve(policy)
+        srv.hub.get = lambda: b"\xff\xd8jpeg"
+        srv.hub.interval = 0.02
+        c = http.client.HTTPConnection("127.0.0.1", srv._httpd.server_address[1], timeout=5)
+        c.request("GET", "/stream?token=kai-secret-12345")
+        r = c.getresponse()
+        self.assertEqual(r.status, 200)
+        self.assertTrue(r.read1(100))
+        self.ssid = "Sam Home"
+        self.clock.t += 11
+        deadline = time.monotonic() + 5
+        data = b"x"
+        while data and time.monotonic() < deadline:              # the server must hang up on its own
+            data = r.read1(65536)
+        self.assertEqual(data, b"")
+        c.close()
 
     def test_the_video_page_follows_the_same_rule(self):
         srv = self.serve(self.policy("Sam Home"))

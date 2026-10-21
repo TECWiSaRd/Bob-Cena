@@ -41,10 +41,10 @@ Set in `[power]` in `config.toml`:
 |---|---|---|
 | `owner` | allowed | you, at Bob's own console |
 | `operator` | allowed | friends in the `bobops` group on the shared console |
-| `dashboard` | allowed | anyone with a working dashboard token |
+| `dashboard` | **off by default** | anyone with a working dashboard token |
 | `viewer` | **not allowed** | watch-only users (`bobview` group). They can watch and press the emergency stop, and I kept powering off off that list on purpose |
 
-To change it: `who = ["owner", "operator", "dashboard", "viewer"]`. To turn the whole feature off:
+To change it (in `config.local.toml`, see [manual 02](02-installing-and-updating.md)): `who = ["owner", "operator", "dashboard", "viewer"]`. To turn the whole feature off:
 `enabled = false`.
 
 The confirmation is tied to the person: if Kai types `/shutdown`, only Kai can confirm it, and only within
@@ -69,8 +69,9 @@ because a broken sudoers file can lock you out of `sudo`. Remove it later with `
 
 - **Claude cannot do this.** There is no tool for it. Only people with access can.
 - **Two steps by the same person** stop accidents (a mistyped command, a stray button press).
-- **Dashboard tokens can power the Pi off.** When you give a friend a dashboard token, this is one of the things
-  it allows. Remove `"dashboard"` from `who` if you'd rather they couldn't.
+- **Dashboard tokens can power the Pi off only if you allow it.** It is off by default. If you add `"dashboard"` to
+  `who`, every working dashboard token (including a friend's) can do it, and the dashboard's confirmation is
+  only a pop-up on their own phone. Leave it off unless you trust everyone you've given a token.
 - In **simulation** (`--sim`) nothing ever powers off the computer you're on: Bob quits and says what the Pi
   would have done.
 - If the power-off command fails after Bob has quit, the reason is in `logs/bob.log` and Bob has already
@@ -81,7 +82,7 @@ because a broken sudoers file can lock you out of `sudo`. Remove it later with `
 | Setting | Default | What it does |
 |---|---|---|
 | `enabled` | true | allow `/shutdown` |
-| `who` | `["owner", "operator", "dashboard"]` | which kinds of user may use it (`viewer` can be added) |
+| `who` | `["owner", "operator"]` | which kinds of user may use it (`viewer` can be added) |
 | `confirm_seconds` | 30 | how long you have to type `/shutdown confirm` |
 
 ## Troubleshooting

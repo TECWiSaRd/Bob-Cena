@@ -144,9 +144,9 @@ works as before).
 
 To switch it off: `dashboard = false` under `[stream]`.
 
-**Shut down the Pi.** At the bottom of the page there's a **Shut down the Pi** button. It asks you to confirm,
+**Shut down the Pi** (off by default; turn it on with `who = ["owner", "operator", "dashboard"]` under `[power]` in `config.local.toml`). When it is on, there's a **Shut down the Pi** button at the bottom of the page. It asks you to confirm,
 and then Bob stops, says goodbye, and the Pi powers off. Nobody can switch it back on from a distance. Every
-dashboard user can do this by default; see [Powering off](21-powering-off.md) to change that.
+dashboard user can then do this, so only allow it if you trust everyone with a token; see [Powering off](21-powering-off.md).
 
 ### Several people, each with their own token, tied to a Wi-Fi network
 

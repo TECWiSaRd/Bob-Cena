@@ -15,6 +15,7 @@ copied somewhere every user can read it (install_remote.sh does that).
 from __future__ import annotations
 
 import json
+import math
 import logging
 import os
 import queue
@@ -89,6 +90,16 @@ class Client:
             return False
         self.tokens -= 1
         return True
+
+
+# Commands with more than one name in bob.py. A deny entry blocks every name, so /exit can't dodge "quit".
+ALIASES = {"h": "help", "?": "help", "stop": "estop", "hush": "pause", "go": "resume", "auto": "resume",
+           "cam": "camera", "mic": "listen", "sensor": "range", "unmute": "mute", "exit": "quit"}
+
+
+def canonical(cmd: str) -> str:
+    cmd = cmd.strip().lower()
+    return ALIASES.get(cmd, cmd)
 
 
 class RemoteConsole:
@@ -212,16 +223,25 @@ class RemoteConsole:
                                                               f"'{(self.cfg.operators or ['operators'])[0]}' group"}))
                 log.warning("Shared console: refused %s", who)
                 return
-            client = Client(conn, ident[1], role)
             with self._lock:
+                full = len(self.clients) >= self.cfg.max_clients
+            if full:
+                conn.sendall(encode({"type": "error", "text": "too many people are attached"}))
+                return
+            candidate = Client(conn, ident[1], role)
+            candidate.send({"type": "hello", "user": candidate.name, "role": role})
+            for level, tag, line in self._backlog():
+                candidate.send({"type": "log", "level": level, "tag": tag, "line": line})
+            with self._lock:                         # registered last, so live lines can't interleave with the backlog
                 if len(self.clients) >= self.cfg.max_clients:
-                    conn.sendall(encode({"type": "error", "text": "too many people are attached"}))
-                    return
-                self.clients.append(client)
+                    full = True
+                else:
+                    self.clients.append(candidate)
+                    client = candidate
+            if full:
+                conn.sendall(encode({"type": "error", "text": "too many people are attached"}))
+                return
             log.info("Shared console: %s attached (%s)", client.name, role)
-            client.send({"type": "hello", "user": client.name, "role": role})
-            for level, tag, line in list(self.logbuf.lines)[-BACKLOG:]:
-                client.send({"type": "log", "level": level, "tag": tag, "line": line})
             self._push_status(client, force=True)
             threading.Thread(target=self._writer, args=(client,), daemon=True).start()
             self._reader(client)
@@ -238,6 +258,15 @@ class RemoteConsole:
                 conn.close()
             except OSError:
                 pass
+
+    def _backlog(self) -> list:
+        """A copy of the recent log that a logging thread can't break halfway through."""
+        for _ in range(5):
+            try:
+                return list(self.logbuf.lines)[-BACKLOG:]
+            except RuntimeError:                      # the deque changed while it was being copied
+                continue
+        return []
 
     def _writer(self, client: Client) -> None:
         while client.alive and not self._halt.is_set():
@@ -294,9 +323,10 @@ class RemoteConsole:
             text = str(msg.get("text", ""))[:500]
             if not text.strip():
                 return
+            text = text.strip()                      # ctrl.handle strips too, so judge what it will really run
             if text.startswith("/"):
                 cmd = text[1:].split(None, 1)[0].lower() if len(text) > 1 else ""
-                if client.role != "owner" and cmd in {d.lower() for d in self.cfg.deny}:
+                if client.role != "owner" and canonical(cmd) in {canonical(d) for d in self.cfg.deny}:
                     client.send({"type": "notice", "text": f"/{cmd} is only for the owner"})
                     return
                 log.info("> [%s] %s", client.name, text)
@@ -309,9 +339,12 @@ class RemoteConsole:
         elif kind == "manual":
             if ctrl.drive_mode:
                 try:
-                    left, right = (max(-1.0, min(1.0, float(msg.get(k, 0)))) for k in ("l", "r"))
+                    raw = [float(msg.get(k, 0)) for k in ("l", "r")]
                 except (TypeError, ValueError):
                     return
+                if not all(math.isfinite(v) for v in raw):      # NaN would otherwise clamp to full speed
+                    return
+                left, right = (max(-1.0, min(1.0, v)) for v in raw)
                 ctrl.manual(left, right, 0.6)
         elif kind == "drive_stop":
             ctrl.drive.stop()

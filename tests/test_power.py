@@ -50,7 +50,9 @@ class PowerUnit(unittest.TestCase):
 
     def test_roles(self):
         p = self.make()
-        self.assertTrue(all(p.allows(r) for r in ("owner", "operator", "dashboard")))
+        self.assertTrue(all(p.allows(r) for r in ("owner", "operator")))
+        self.assertFalse(p.allows("dashboard"))                              # opt-in: guests' tokens can't power the Pi off
+        self.assertTrue(self.make(who=["dashboard"]).allows("dashboard"))
         self.assertFalse(p.allows("viewer"))                       # watch-only users can't, unless the owner adds them
         self.assertTrue(self.make(who=["viewer"]).allows("viewer"))
         self.assertFalse(self.make(enabled=False).allows("owner"))
@@ -156,7 +158,7 @@ class ThroughTheRobot(unittest.TestCase):
         self.assertFalse(self.ctrl.quit.is_set())
 
     def test_roles(self):
-        for role, allowed in (("owner", True), ("operator", True), ("dashboard", True), ("viewer", False)):
+        for role, allowed in (("owner", True), ("operator", True), ("dashboard", False), ("viewer", False)):
             text = self.ctrl.handle("/shutdown", role=role)
             self.assertEqual("isn't allowed" not in text, allowed, role)
 
@@ -177,7 +179,7 @@ class ThroughTheRobot(unittest.TestCase):
         import selfcheck
         rows = {name: (lv, d) for lv, name, d in selfcheck.run_checks(self.ctrl, Path("."))}
         self.assertEqual(rows["power off"][0], "ok")
-        self.assertIn("owner, operator, dashboard", rows["power off"][1])
+        self.assertIn("owner, operator", rows["power off"][1])
 
 
 class FakeController:
@@ -273,3 +275,34 @@ class InstallPower(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DetachTests(unittest.TestCase):
+    def setUp(self):
+        import bob
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        cfg = config.Config()
+        cfg.stream.enabled = False
+        self.ctrl = bob.Controller(cfg, sim=True, paused=True)
+        self.addCleanup(self.ctrl.shutdown)
+
+    def test_outside_tmux_it_says_so_and_bob_keeps_running(self):
+        old = os.environ.pop("TMUX", None)
+        self.addCleanup(lambda: old and os.environ.__setitem__("TMUX", old))
+        self.assertIn("isn't running inside tmux", self.ctrl.handle("/detach"))
+        self.assertFalse(self.ctrl.quit.is_set())
+
+    def test_inside_tmux_it_detaches_that_session_only(self):
+        import subprocess
+        from unittest import mock
+        calls = []
+        def fake(args, **k):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout="bob\n", stderr="")
+        with mock.patch.dict(os.environ, {"TMUX": "/tmp/tmux-1/default,1,0"}), mock.patch("subprocess.run", fake):
+            self.assertEqual(self.ctrl.handle("/detach"), "")
+        self.assertEqual(calls[-1], ["tmux", "detach-client", "-s", "bob"])
+        self.assertFalse(self.ctrl.quit.is_set())
+
+    def test_shared_console_users_cannot_detach_the_owner(self):
+        self.assertIn("friends", self.ctrl.handle("/detach", by="kai", role="operator"))

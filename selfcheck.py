@@ -188,6 +188,12 @@ def run_checks(ctrl, base: Path, run=_run, read=_read, which=shutil.which) -> li
             ok, why = power.capable()
             add(OK if ok else WARN, "power off", f"/shutdown works ({why}); allowed for: {', '.join(ctrl.cfg.power.who)}" if ok else why)
 
+    pad = getattr(ctrl, "gamepad", None)
+    if pad is None:
+        add(OFF, "controller", "off ([gamepad] enabled = false)")
+    else:
+        add(OK if pad.connected else WARN, "controller", pad.describe())
+
     remote = getattr(ctrl, "remote", None)
     if remote is not None:
         if not ctrl.cfg.remote.enabled:

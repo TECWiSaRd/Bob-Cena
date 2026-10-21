@@ -171,8 +171,24 @@ class HomeConfig:
 @dataclass
 class PowerConfig:
     enabled: bool = True         # people can power the Pi off with /shutdown (two steps; Claude cannot). Needs ./install_power.sh unless sudo is already open
-    who: list = field(default_factory=lambda: ["owner", "operator", "dashboard"])   # which kinds of user: owner, operator (shared console), viewer (shared console), dashboard
+    who: list = field(default_factory=lambda: ["owner", "operator"])   # which kinds of user: owner, operator (shared console), viewer (shared console), dashboard
     confirm_seconds: float = 30.0   # /shutdown confirm must follow within this time
+
+
+@dataclass
+class GamepadConfig:
+    enabled: bool = False        # drive with an Xbox controller (see manual 22)
+    device: str = "auto"         # "auto" finds /dev/input/js*; or a path such as "/dev/input/js1"
+    deadzone: float = 0.15       # stick wobble below this is ignored
+    slow_factor: float = 0.4     # speed while the slow button (LB) is held
+    axis_turn: int = 0           # left stick left/right   (the numbers below are the Xbox layout of Linux's xpad driver)
+    axis_throttle: int = 1       # left stick up/down
+    btn_talk: int = 0            # A
+    btn_estop: int = 1           # B
+    btn_resume: int = 3          # Y
+    btn_slow: int = 4            # LB
+    btn_back: int = 6            # Back / View (hold to release the e-stop)
+    btn_drive: int = 7           # Start / Menu
 
 
 @dataclass
@@ -226,6 +242,7 @@ class Config:
     index: IndexConfig = field(default_factory=IndexConfig)
     home: HomeConfig = field(default_factory=HomeConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
+    gamepad: GamepadConfig = field(default_factory=GamepadConfig)
     power: PowerConfig = field(default_factory=PowerConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
@@ -248,9 +265,15 @@ CHOICES = {
 
 
 def load(path: Path) -> Config:
+    """config.toml, then config.local.toml beside it (your own choices; not committed) on top."""
     cfg = Config()
-    if not path.exists():
-        return cfg
+    for source in (path, path.with_name("config.local.toml")):
+        if source.exists():
+            _apply(cfg, source)
+    return cfg
+
+
+def _apply(cfg: Config, path: Path) -> None:
     data = tomllib.loads(path.read_text())
     sections = {f.name for f in fields(cfg)}
     for name in data:
@@ -272,4 +295,3 @@ def load(path: Path) -> Config:
             if allowed and str(value).lower() not in allowed:
                 raise ValueError(f"{path}: [{section.name}] {key} = {value!r} isn't one of: {', '.join(allowed)}")
             setattr(target, key, value)
-    return cfg

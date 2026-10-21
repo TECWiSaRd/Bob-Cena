@@ -32,6 +32,7 @@ img{max-width:100%%;height:auto}p{margin:.5em}</style>
 
 # Commands the dashboard may run (the first word, without the slash). Anything else is refused:
 # no /quit, /forget, /people clear, /calibrate (it drives the robot for a long time) and so on.
+RECHECK_S = 5.0      # a running video stream re-checks its token this often (Bob may have moved to another Wi-Fi)
 DASH_COMMANDS = {"estop", "clear", "pause", "hush", "resume", "step", "ask", "motion", "camera", "mute", "unmute",
                  "follow", "find", "check", "radio", "listen", "range", "speed", "goal", "say", "sound", "talk", "trim", "music", "shutdown"}
 
@@ -312,8 +313,14 @@ class StreamServer:
                 server.clients += 1
                 log.info("stream viewer connected: %s (%d watching)", self.client_address[0], server.clients)
                 last = None
+                checked = time.monotonic()
                 try:
                     while True:
+                        if server.policy.configured and time.monotonic() - checked > RECHECK_S:
+                            checked = time.monotonic()
+                            if getattr(self, "user", None) not in server.policy.valid():
+                                log.info("stream viewer %s dropped: their token no longer works here", self.user)
+                                break              # e.g. Bob moved to another Wi-Fi network
                         frame = server.hub.get()
                         if frame is None or frame is last:
                             time.sleep(server.hub.interval)
@@ -326,6 +333,7 @@ class StreamServer:
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
                 finally:
+                    self.close_connection = True      # the stream has no length, so ending it means hanging up
                     server.clients -= 1
                     log.info("stream viewer left (%d watching)", server.clients)
 

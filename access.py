@@ -83,7 +83,7 @@ def current_wifi(run=_run) -> str | None:
     if out:
         for line in out.splitlines():
             if line.startswith("yes:"):
-                return line[4:].replace("\\:", ":").replace("\\\\", "\\") or None
+                return re.sub(r"\\(.)", r"\1", line[4:]) or None      # nmcli escapes ':' and '\\' with a backslash
     out = run(["iwgetid", "-r"])
     return out.strip() or None if out else None
 
@@ -91,7 +91,7 @@ def current_wifi(run=_run) -> str | None:
 class AccessPolicy:
     def __init__(self, owner_token: str = "", tokens: dict[str, str] | None = None,
                  wifi: dict[str, list[str]] | None = None, wifi_reader=current_wifi, clock=time.monotonic,
-                 problems: list[str] | None = None):
+                 problems: list[str] | None = None, background: bool = True):
         self.owner_token = owner_token
         self.tokens = dict(tokens or {})
         self.wifi_map = dict(wifi or {})
@@ -99,6 +99,8 @@ class AccessPolicy:
         self._reader, self._clock = wifi_reader, clock
         self._cache: tuple[float, str | None] = (-1e9, None)
         self._lock = threading.Lock()
+        self._background = background
+        self._refreshing = False
 
     @classmethod
     def load(cls, env_path: Path, owner_token: str = "", **kw) -> "AccessPolicy":
@@ -117,15 +119,30 @@ class AccessPolicy:
         """Is there any token at all? If not, the stream stays on this Pi only."""
         return bool(self.owner_token or self.tokens)
 
+    def _lookup(self) -> None:
+        try:
+            ssid = self._reader()
+        except Exception:
+            ssid = None
+        with self._lock:
+            self._cache = (self._clock(), ssid)
+            self._refreshing = False
+
     def wifi(self) -> str | None:
-        """The current network name, looked up at most every 10 seconds."""
+        """The current network name. Re-read at most every 10 seconds, and never while holding up other requests:
+        a stale answer is served while one background thread looks again (nmcli can take seconds)."""
         with self._lock:
             now = self._clock()
-            if now - self._cache[0] > 10:
-                try:
-                    self._cache = (now, self._reader())
-                except Exception:
-                    self._cache = (now, None)
+            fresh = now - self._cache[0] <= 10
+            if fresh or self._refreshing:
+                return self._cache[1]
+            first = self._cache[0] < -1e8
+            self._refreshing = True
+        if first or not self._background:
+            self._lookup()                       # nothing to serve yet (or tests): wait for the answer
+        else:
+            threading.Thread(target=self._lookup, name="wifi-lookup", daemon=True).start()
+        with self._lock:
             return self._cache[1]
 
     def valid(self) -> dict[str, str]:

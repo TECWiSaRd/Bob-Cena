@@ -107,7 +107,7 @@ mic_deaf_while_playing = true
 poll_seconds = 1.0
 
 [timeline]
-enabled = true            # true = keep a record of what Bob saw, decided and did (logs/timeline)
+enabled = false           # true = keep a record of what Bob saw, decided and did (logs/timeline)
 thumbnails = true          # ...including small camera pictures (they can show people)
 thumb_every_s = 10.0
 thumb_width = 320
@@ -115,9 +115,9 @@ keep_days = 7.0            # older records are deleted
 max_mb = 200               # the folder never grows beyond this
 
 [home]
-enabled = true            # true = Bob may turn the lights in his room on and off through Home Assistant (see manual 19)
+enabled = false           # true = Bob may turn the lights in his room on and off through Home Assistant (see manual 19)
 url = "http://homeassistant.local:8123"
-rooms = ["Kitchen", "Living Room", "Adam's Room"]                 # Home Assistant areas he may control, for example ["Kitchen", "Living Room"]
+rooms = []                 # Home Assistant areas he may control, for example ["Kitchen", "Living Room"]
 location_entity = ""       # a sensor whose state is the room Bob is in, for example "sensor.bob_area"
 quiet_start = "22:00"      # no turning lights ON between these times (off is fine). Empty = never quiet
 quiet_end = "07:00"
@@ -126,7 +126,7 @@ cooldown_s = 30.0
 dark_below = 40.0          # camera brightness (0-255)
 bright_above = 90.0
 # Room tags: printed AprilTags by each door (make them with tag_tools.py; manual 19). Tag number = room.
-tags = { 1 = "Kitchen", 2 = "Living Room", 3 = "Adam's Room" }                  # for example { 1 = "Kitchen", 2 = "Living Room" }
+tags = {}                  # for example { 1 = "Kitchen", 2 = "Living Room" }
 tag_min_px = 40.0          # a tag must look this wide (pixels) to be believed, so he has to be close
 tag_valid_s = 300.0
 tag_search_speed = 0.35    # /locate: how fast he turns on the spot looking for a tag
@@ -135,16 +135,31 @@ tag_max_move_s = 20.0      # the room is forgotten once the wheels have run this
 
 [power]
 enabled = true             # people can power the Pi off with /shutdown, then /shutdown confirm (Claude cannot). See manual 21
-who = ["owner", "operator", "dashboard"]   # also "viewer" for watch-only users of the shared console
+who = ["owner", "operator"]   # also "dashboard" (anyone with a dashboard token) and "viewer" (watch-only shared-console users)
 confirm_seconds = 30.0
 
 [remote]
-enabled = true            # true = friends with a Pi login can attach to this console with `bob-console` (manual 20)
+enabled = false           # true = friends with a Pi login can attach to this console with `bob-console` (manual 20)
 socket = "/tmp/bob-console.sock"
 operators = ["bobops"]     # Linux groups whose members may run commands
 viewers = ["bobview"]      # Linux groups that may only watch (and press the emergency stop)
 deny = ["quit"]            # commands only you (the account Bob runs as) may run
 max_clients = 4
+
+[gamepad]
+enabled = false            # true = drive with an Xbox controller (manual 22). Start = manual drive, B = emergency stop
+device = "auto"            # or a path such as "/dev/input/js1"
+deadzone = 0.15
+slow_factor = 0.4          # speed while LB is held
+# Button and stick numbers (Xbox layout of Linux's xpad driver). Change them if /check shows the wrong buttons do things.
+axis_turn = 0
+axis_throttle = 1
+btn_talk = 0
+btn_estop = 1
+btn_resume = 3
+btn_slow = 4
+btn_back = 6
+btn_drive = 7
 
 [index]
 enabled = true             # a searchable index of the timeline, notes, people, radio, warnings and manuals (/search)
@@ -153,7 +168,7 @@ keep_days = 30.0           # radio and warning records older than this are dropp
 log_warnings = true
 manuals = true
 max_rows = 200000
-ai = true                 # true = Claude may search past timeline and radio records (the recall tool)
+ai = false                # true = Claude may search past timeline and radio records (the recall tool)
 
 [brain]
 model = "claude-sonnet-5-5"

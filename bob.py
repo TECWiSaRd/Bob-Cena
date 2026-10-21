@@ -37,6 +37,7 @@ from timeline import Timeline
 from index import Index
 from home import Home
 from power import PowerControl
+from gamepad import Gamepad
 
 BASE = Path(__file__).resolve().parent
 log = logging.getLogger("bob")
@@ -87,6 +88,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /notes /forget        show / wipe Bob's long-term notes
   /people               who Bob knows; also: forget <name>, clear
   /effort low|medium|high
+  /detach              leave tmux, Bob keeps running (same as Ctrl-B d)
   /quit"""
 
 
@@ -157,6 +159,7 @@ class Controller:
         self.calibrating = None   # the Calibrator while a calibration run is in progress
         self.quit = threading.Event()
         self.drive_mode = False
+        self.gamepad = Gamepad(cfg.gamepad, self) if cfg.gamepad.enabled else None
         self.ranger = RangeSensor(cfg.sensor, sim)
         self.drive = Drive(cfg.drive, sim, self.ranger)
         self.drive.on_estop = self.estop
@@ -230,6 +233,8 @@ class Controller:
         self.home.attach_camera(self.camera, self.drive)
         self.brain.start()
         self.listener.start()
+        if self.gamepad:
+            self.gamepad.start()
         if self.music:
             self.music.start()
         if self.radio:
@@ -292,6 +297,22 @@ class Controller:
             text, _ = h.act(sub, pct, operator=True)
             return text + f"  (Bob may use the lights himself: {'yes' if self.controls.home_ai else 'NO'})" * (sub == "status")
         return "usage: /home | on [brightness%] | off | check | ai on|off"
+
+    def detach_command(self, by: str | None) -> str:
+        """/detach: the same as Ctrl-B then d. Leaves tmux and keeps Bob running."""
+        if by is not None:
+            return "/detach is for the console Bob was started in (friends: press Ctrl-C to leave)"
+        if not os.environ.get("TMUX"):
+            return "Bob isn't running inside tmux, so there is nothing to detach from (use /quit to stop him)"
+        import subprocess
+        try:
+            name = subprocess.run(["tmux", "display-message", "-p", "#{session_name}"], capture_output=True,
+                                  text=True, timeout=3).stdout.strip()
+            done = subprocess.run(["tmux", "detach-client", "-s", name] if name else ["tmux", "detach-client"],
+                                  capture_output=True, text=True, timeout=3)
+        except (OSError, subprocess.SubprocessError) as e:
+            return f"couldn't run tmux: {e}"
+        return "" if done.returncode == 0 else f"tmux said: {done.stderr.strip() or done.returncode}"
 
     def shutdown_command(self, words: list[str], by: str | None, role: str) -> str:
         """/shutdown, then /shutdown confirm: power the Pi off. Two steps, by the same person."""
@@ -485,6 +506,8 @@ class Controller:
         self.follower.stop("shutting down")
         if self.music:
             self.music.stop()     # puts the music volume back if it was ducked
+        if self.gamepad:
+            self.gamepad.stop()
         self.listener.stop()
         self.index.stop()
         self.home.stop()
@@ -849,6 +872,8 @@ class Controller:
                     return "effort must be low|medium|high|xhigh|max"
                 self.cfg.brain.effort = arg
                 return f"effort {arg}"
+            case "detach":
+                return self.detach_command(by)
             case "quit" | "exit":
                 self.quit.set()
             case _:
