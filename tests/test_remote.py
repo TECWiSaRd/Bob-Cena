@@ -43,6 +43,12 @@ class FakeCtrl:
     def _stop(self):
         self.stops += 1
 
+    def driving_for(self, who):
+        return self.drive_mode
+
+    def leave_drive(self, who):
+        self.drive_mode = False
+
     def handle(self, line, by=None, role="owner"):
         self.handled.append((line, by))
         self.roles = getattr(self, "roles", []) + [role]
@@ -218,7 +224,7 @@ class RemoteTests(unittest.TestCase):
         self.ctrl.drive_mode = True
         c.manual(9, -9, 0.6)
         self.assertTrue(wait_for(lambda: self.ctrl.manual_moves == [(1.0, -1.0)]))
-        c.drive_mode = False                                                       # leaving drive mode
+        c.leave_drive()                                                            # leaving drive mode
         self.assertTrue(wait_for(lambda: self.ctrl.drive_mode is False))
         self.assertGreaterEqual(self.ctrl.stops, 1)
 
@@ -238,6 +244,39 @@ class RemoteTests(unittest.TestCase):
         raw.sendall(encode({"type": "line", "text": "/say still works"}))
         self.assertTrue(wait_for(lambda: ("/say still works", "alex") in self.ctrl.handled))
         self.assertEqual(len(self.ctrl.handled), 1)
+
+    def test_each_person_sees_only_their_own_drive_mode(self):
+        self.ctrl.driving = {"kai"}
+        self.ctrl.driving_for = lambda who: who in self.ctrl.driving
+        kai = self.connect((OWNER_UID + 1, "kai", {"bobops"}))
+        sam = self.connect((OWNER_UID + 2, "sam", {"bobops"}))
+        self.assertTrue(wait_for(lambda: kai.drive_mode))
+        time.sleep(0.5)
+        self.assertFalse(sam.drive_mode)
+        sam.sock.sendall(b'{"type":"manual","l":1,"r":1}\n')           # sam isn't driving: ignored
+        kai.manual(1, 1, 0.6)
+        self.assertTrue(wait_for(lambda: self.ctrl.manual_moves == [(1.0, 1.0)]))
+        time.sleep(0.2)
+        self.assertEqual(len(self.ctrl.manual_moves), 1)
+
+    def test_a_driver_who_vanishes_does_not_leave_manual_drive_on(self):
+        self.ctrl.drive_mode = True
+        driving = {"kai"}
+        self.ctrl.driving_for = lambda who: who in driving
+        self.ctrl.leave_drive = lambda who: (driving.discard(who), setattr(self.ctrl, "drive_mode", False))
+        kai = self.connect((OWNER_UID + 1, "kai", {"bobops"}))
+        self.assertTrue(wait_for(lambda: kai.drive_mode))
+        stops = self.ctrl.stops
+        kai.sock.close()                                           # closed terminal, lost Wi-Fi
+        self.assertTrue(wait_for(lambda: self.ctrl.drive_mode is False))
+        self.assertGreater(self.ctrl.stops, stops)                 # and the wheels were stopped
+
+    def test_detach_leaves_the_viewer_and_bob_keeps_running(self):
+        c = self.connect()
+        c.handle("/detach")
+        self.assertTrue(c.quit.is_set())
+        time.sleep(0.2)
+        self.assertEqual(self.ctrl.handled, [])                    # it never reached Bob
 
     def test_a_flood_is_rate_limited(self):
         c = self.connect()
@@ -410,3 +449,75 @@ class AttributionThroughTheRealController(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SocketOwnershipTests(unittest.TestCase):
+    def test_an_old_bob_shutting_down_does_not_delete_the_new_bobs_socket(self):
+        d = tempfile.mkdtemp(dir="/tmp")
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "c.sock")
+        cfg = config.RemoteConfig(enabled=True, socket=path)
+        old = RemoteConsole(cfg, FakeCtrl(), LogBuffer(), identify=lambda c: None)
+        old.start()
+        os.unlink(path)                                   # a restart: the new Bob clears the path and binds its own
+        new = RemoteConsole(cfg, FakeCtrl(), LogBuffer(), identify=lambda c: None)
+        new.start()
+        self.addCleanup(new.stop)
+        old.stop()                                        # the slow old Bob finally finishes shutting down
+        self.assertTrue(os.path.exists(path))
+        new.stop()
+        self.assertFalse(os.path.exists(path))            # and the owner still cleans up after itself
+
+
+class DriveBetweenPeopleOnTheRealController(unittest.TestCase):
+    """The owner and a friend attached to the same real Bob: one person's driving never turns on or off the other's."""
+
+    def setUp(self):
+        import bob
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        cfg = config.Config()
+        cfg.stream.enabled = False
+        self.ctrl = bob.Controller(cfg, sim=True, paused=True)
+        self.addCleanup(self.ctrl.shutdown)
+        self.dir = tempfile.mkdtemp(dir="/tmp")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.ident = (os.getuid(), "adam", set())
+        self.server = RemoteConsole(config.RemoteConfig(enabled=True, socket=os.path.join(self.dir, "c.sock")),
+                                    self.ctrl, LogBuffer(), identify=lambda conn: self.ident)
+        self.server.start()
+        self.addCleanup(self.server.stop)
+
+    def attach(self, ident):
+        self.ident = ident
+        c = RemoteController(os.path.join(self.dir, "c.sock"), None)
+        self.addCleanup(lambda: c.sock.close())
+        wait_for(lambda: c.user != "?")
+        return c
+
+    def settle(self):
+        time.sleep(0.9)                                            # status updates go out every 0.4 s
+
+    def test_a_friend_driving_and_leaving_never_touches_the_owners_drive(self):
+        owner = self.attach((os.getuid(), "adam", set()))
+        kai = self.attach((os.getuid() + 1, "kai", {"bobops"}))
+        kai.handle("/drive")
+        self.settle()
+        self.assertTrue(kai.drive_mode)
+        self.assertFalse(owner.drive_mode or self.ctrl.driving_for(None))
+        kai.leave_drive()
+        self.settle()
+        self.assertFalse(owner.drive_mode or kai.drive_mode or self.ctrl.driving_for(None) or self.ctrl.drive_mode)
+
+    def test_when_the_friend_leaves_the_owner_keeps_driving(self):
+        owner = self.attach((os.getuid(), "adam", set()))
+        kai = self.attach((os.getuid() + 1, "kai", {"bobops"}))
+        owner.handle("/drive")
+        kai.handle("/drive")
+        self.settle()
+        kai.leave_drive()
+        self.settle()
+        self.assertTrue(owner.drive_mode and self.ctrl.drive_mode)
+        self.assertFalse(kai.drive_mode)
+        owner.leave_drive()
+        self.settle()
+        self.assertFalse(self.ctrl.drive_mode)

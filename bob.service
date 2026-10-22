@@ -10,11 +10,12 @@ WorkingDirectory=@DIR@
 Environment=TERM=xterm-256color
 Environment=XDG_RUNTIME_DIR=/run/user/@UID@
 # Relaunches Bob after a crash; a clean /quit ends the session.
-ExecStart=/usr/bin/tmux new-session -d -s bob -x 120 -y 40 "until @DIR@/.venv/bin/python @DIR@/bob.py; do echo 'Bob crashed - restarting in 3s'; sleep 3; done"
+ExecStart=/usr/bin/tmux new-session -d -s bob -x 120 -y 40 "until env BOB_SUPERVISED=1 @DIR@/.venv/bin/python @DIR@/bob.py; do echo 'Bob crashed - restarting in 3s'; sleep 3; done"
 ExecStop=/usr/bin/tmux send-keys -t bob "/quit" Enter
 ExecStopPost=/usr/bin/tmux kill-session -t bob
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=20          # a Bob that is stuck shutting down is killed after this, not after the 90 s default
 
 [Install]
 WantedBy=multi-user.target

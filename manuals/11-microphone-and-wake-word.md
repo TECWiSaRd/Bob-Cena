@@ -158,9 +158,24 @@ Under `[mic]`. Details in the [settings reference](15-settings-reference.md).
 | `wake_model` | `"wakewords/hey_bob.onnx"` | the wake word model |
 | `wake_threshold` | 0.5 | wake word sensitivity |
 | `wake_confirm` | true | double-check the name in the transcript |
-| `wake_word` | `"bob"` | the word for the `"text"` engine |
+| `wake_word` | `"bob"` | the word for the `"text"` engine (also the name used by the two settings below) |
+| `name_aliases` | `["mom", "bub", ...]` | words the speech model mishears as the name. When one **opens** what you said (after any "hey"), it is changed back to "Bob". "Mom's coming" or "my mom" are left alone |
+| `initial_prompt` | `""` | a hint that helps the speech model hear the name. Empty = "The speaker is talking to a robot named Bob." |
 | `wake_window_s` | 20 | listening window after waking |
 | `wake_verifier` | `""` | experimental voice filter (see TRAINING_HEY_BOB.md) |
+
+## When he hears "Mom" instead of "Bob"
+
+The small speech model (`tiny.en`) often turns "Bob" into "Mom", "Bub" or "Bop". Three things help, cheapest first:
+
+1. **Already built in:** a hint tells the model the speaker is talking to a robot named Bob, and if what you said
+   *opens* with a known mishearing (`name_aliases`), it is changed back to "Bob" before Claude sees it.
+2. **A better model:** `model = "base.en"` under `[mic]` is noticeably more accurate. It is 2-3 times slower to
+   transcribe, but still fine on a Pi 4 for short sentences.
+3. **Speak clearly:** "Bob" is short and starts and ends with the same sound, which is hard for the small model.
+   "Hey Bob," with a tiny pause, works better than "Bob" alone.
+
+If it mishears the name as another word, add that word to `name_aliases`.
 
 ## Privacy
 

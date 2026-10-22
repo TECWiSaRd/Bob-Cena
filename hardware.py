@@ -565,6 +565,11 @@ class Camera:
         self.cfg = cfg
         self._src = None
         self._lock = threading.Lock()
+        self._busy_since: float | None = None      # when the capture now in progress began (None = idle)
+        self._warned_stall = False
+        self._last_error = -1e9
+        self.last_error = ""                      # why the latest picture failed, for /check
+        self._closing = threading.Event()
         self.enabled = True
         if sim:
             log.info("[sim] camera disabled - Bob is blind")
@@ -583,12 +588,66 @@ class Camera:
     def available(self) -> bool:
         return self._src is not None
 
+    def watch(self, restart_after: float, on_stuck, poll: float = 1.0) -> None:
+        """Call `on_stuck(seconds)` once if one picture stays pending for `restart_after` seconds."""
+        if restart_after <= 0 or self._src is None:
+            return
+
+        def loop():
+            fired_for = None
+            while not self._closing.wait(poll):
+                since = self._busy_since
+                if since is not None and since != fired_for and time.monotonic() - since >= restart_after:
+                    fired_for = since                # once per stuck picture; a later hang can fire again
+                    on_stuck(time.monotonic() - since)
+
+        threading.Thread(target=loop, name="camera-watchdog", daemon=True).start()
+
+    STALL_S = 4.0       # a picture that takes longer than this means the camera driver is stuck
+
+    @property
+    def stalled(self) -> bool:
+        """Is a capture stuck right now? A hung driver must not freeze the console, the dashboard and the AI with it."""
+        since = self._busy_since
+        return since is not None and time.monotonic() - since > self.STALL_S
+
+    def _take(self, grab):
+        """Run one capture under the camera lock, but never queue up behind a stuck one."""
+        if self._src is None or not self.enabled:
+            return None
+        if self.stalled or not self._lock.acquire(timeout=1.0):      # a short wait: stalls must not stack up behind each other
+            if self.stalled and not self._warned_stall:
+                self._warned_stall = True
+                log.error("Camera is not responding (a picture has been pending for over %.0fs). Commands that need it "
+                          "are skipped. Restart Bob, and reboot the Pi if it happens again", self.STALL_S)
+            return None
+        try:
+            self._busy_since = time.monotonic()
+            try:
+                frame = grab()
+                self.last_error = ""
+                self._warned_stall = False
+                return frame
+            except Exception as e:                  # a driver error must give "no picture", not kill the caller's thread
+                self.last_error = str(e)
+                if time.monotonic() - self._last_error > 30:
+                    self._last_error = time.monotonic()
+                    log.warning("Camera capture failed: %s", e)
+                return None
+            finally:
+                self._busy_since = None
+        finally:
+            self._lock.release()
+
     def set_enabled(self, on: bool) -> bool:
         """Operator switch. Off stops the sensor itself, not just frame capture.
 
         Returns False if the camera could not be switched on (it then stays off).
         """
-        with self._lock:
+        if self.stalled or not self._lock.acquire(timeout=self.STALL_S):
+            log.error("Camera is not responding, so it can't be switched %s now", "on" if on else "off")
+            return False
+        try:
             if self._src is not None and on != self.enabled:
                 try:
                     self._src.start() if on else self._src.stop()
@@ -598,19 +657,15 @@ class Camera:
                         return False
             self.enabled = on
             return True
+        finally:
+            self._lock.release()
 
     def capture_jpeg(self) -> bytes | None:
-        if self._src is None or not self.enabled:
-            return None
-        with self._lock:
-            return self._src.jpeg()
+        return self._take(lambda: self._src.jpeg())
 
     def grab_bgr(self):
         """A fresh frame as a BGR numpy array for local vision (following, calibration), or None."""
-        if self._src is None or not self.enabled:
-            return None
-        with self._lock:
-            return self._src.frame()
+        return self._take(lambda: self._src.frame())
 
     def brightness(self) -> float | None:
         """How bright the camera's picture is, 0 (black) to 255 (white), or None without a picture."""
@@ -618,6 +673,7 @@ class Camera:
         return None if frame is None else float(frame.mean())
 
     def close(self) -> None:
+        self._closing.set()
         if self._src is not None:
             if self.enabled:
                 self._src.stop()

@@ -26,6 +26,13 @@ class FakeCtrl:
     def _stop(self):
         self.stops += 1
 
+    def driving_for(self, who):
+        return self.drive_mode and who == "gamepad"
+
+    def leave_drive(self, who):
+        if who == "gamepad":
+            self.drive_mode = False
+
     def _talk(self):
         self.talks += 1
         return "talking"
@@ -227,3 +234,52 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeparateFromTheConsoleTests(unittest.TestCase):
+    """The controller and the tmux console are different drivers on the real controller."""
+
+    def setUp(self):
+        import bob
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        cfg = config.Config()
+        cfg.stream.enabled = False
+        self.ctrl = bob.Controller(cfg, sim=True, paused=True)
+        self.addCleanup(self.ctrl.shutdown)
+        self.pad = Gamepad(config.GamepadConfig(), self.ctrl, clock=Clock())
+
+    def press(self, n):
+        self.pad.event(BUTTON, n, 1)
+        self.pad.event(BUTTON, n, 0)
+
+    def test_starting_and_stopping_on_the_controller_never_changes_the_consoles_drive(self):
+        self.press(START)
+        self.assertTrue(self.ctrl.driving_for("gamepad"))
+        self.assertFalse(self.ctrl.driving_for(None))              # the owner's tmux console is not switched to driving
+        self.press(START)
+        self.assertFalse(self.ctrl.drive_mode)
+        self.assertFalse(self.ctrl.driving_for(None))
+
+    def test_the_console_driving_is_not_stopped_or_started_by_the_controller(self):
+        self.ctrl.handle("/drive")                                  # the owner drives from the console
+        self.press(START)                                           # a friend starts on the controller...
+        self.press(START)                                           # ...and stops
+        self.assertTrue(self.ctrl.driving_for(None))                # the owner is still driving, undisturbed
+        self.assertFalse(self.ctrl.driving_for("gamepad"))
+
+    def test_the_stick_only_moves_him_while_the_controller_itself_is_driving(self):
+        moves = []
+        self.ctrl.manual = lambda l, r, s: moves.append((l, r))
+        self.ctrl.handle("/drive")                                  # the console is driving, the controller is not
+        self.pad.event(AXIS, LY, -FULL)
+        self.pad.tick()
+        self.assertEqual(moves, [])
+        self.press(START)
+        self.pad.tick()
+        self.assertEqual(moves, [(1.0, 1.0)])
+
+    def test_drive_all_includes_a_connected_controller(self):
+        self.pad.connected = "Xbox Wireless Controller"
+        self.ctrl.gamepad = self.pad
+        self.ctrl.handle("/drive all")
+        self.assertTrue(self.ctrl.driving_for("gamepad") and self.ctrl.driving_for(None))

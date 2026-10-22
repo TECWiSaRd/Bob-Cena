@@ -10,6 +10,8 @@ every request must carry ?token=<value>.
 from __future__ import annotations
 
 import json
+import select
+import socket
 import logging
 import os
 import sys
@@ -144,6 +146,7 @@ class StreamServer:
         self.lockout = Lockout()
         self._seen_users: dict[str, float] = {}
         self.clients = 0
+        self._count_lock = threading.Lock()
         self._httpd = None
         self.controller = None     # set by attach(): the dashboard needs it
         self.logbuf = None
@@ -305,17 +308,34 @@ class StreamServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _peer_gone(self) -> bool:
+                """Has the browser hung up? (Writes only notice after a frame or two, and not at all if no frame is sent.)"""
+                conn = self.connection
+                if not isinstance(conn, socket.socket) or hasattr(conn, "pending"):
+                    return False                    # TLS or an unusual socket: can't peek, so rely on write errors
+                try:
+                    ready, _, _ = select.select([conn], [], [], 0)
+                    return bool(ready) and conn.recv(1, socket.MSG_PEEK) == b""
+                except (BlockingIOError, InterruptedError):
+                    return False                    # nothing to read right now: still connected
+                except (OSError, ValueError):
+                    return True                     # reset, or the socket is closed
+
             def _stream(self):
                 self.send_response(200)
                 self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
-                server.clients += 1
-                log.info("stream viewer connected: %s (%d watching)", self.client_address[0], server.clients)
+                with server._count_lock:
+                    server.clients += 1
+                    watching = server.clients
+                log.info("stream viewer connected: %s (%d watching)", self.client_address[0], watching)
                 last = None
                 checked = time.monotonic()
                 try:
                     while True:
+                        if self._peer_gone():
+                            break                  # a reload or closed tab: don't wait for a write to fail
                         if server.policy.configured and time.monotonic() - checked > RECHECK_S:
                             checked = time.monotonic()
                             if getattr(self, "user", None) not in server.policy.valid():
@@ -334,8 +354,10 @@ class StreamServer:
                     pass
                 finally:
                     self.close_connection = True      # the stream has no length, so ending it means hanging up
-                    server.clients -= 1
-                    log.info("stream viewer left (%d watching)", server.clients)
+                    with server._count_lock:
+                        server.clients -= 1
+                        watching = server.clients
+                    log.info("stream viewer left (%d watching)", watching)
 
         class Server(ThreadingHTTPServer):
             daemon_threads = True

@@ -52,7 +52,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /resume               start autonomous AI ticks again (/think on|off also works)
   /model opus|sonnet|haiku   switch Claude model live (haiku is ~40x cheaper than opus)
   /step                 run one AI tick while paused
-  /drive                manual WASD/arrow-key driving (pauses AI)
+  /drive [all]          manual WASD/arrow-key driving for you (pauses AI); 'all' = everyone attached
   /fwd /back /left /right [secs]   quick manual moves
   /move L R SECS        raw wheel speeds -1..1
   /motion on|off        allow / forbid AI movement (AI keeps seeing and talking)
@@ -158,7 +158,10 @@ class Controller:
         self.calibration = load_tuning(cfg.drive, cfg.home, self.tuning_extra)
         self.calibrating = None   # the Calibrator while a calibration run is in progress
         self.quit = threading.Event()
-        self.drive_mode = False
+        self._check_lock = threading.Lock()
+        self._drive_mode = False
+        self.drive_users: set[str] = set()            # who is driving by hand (/drive adds you, /drive all adds everyone attached)
+        self._drive_lock = threading.RLock()
         self.gamepad = Gamepad(cfg.gamepad, self) if cfg.gamepad.enabled else None
         self.ranger = RangeSensor(cfg.sensor, sim)
         self.drive = Drive(cfg.drive, sim, self.ranger)
@@ -183,6 +186,7 @@ class Controller:
         self.index = Index(cfg.index, BASE)
         self.power = PowerControl(cfg.power, sim=sim)
         self.home = Home(cfg.home, os.environ.get("HA_TOKEN", ""))
+        self.home.wifi_reader = self.access.wifi
         self.home.on_event = lambda **kw: self.timeline.record("home", **kw)
         self.drive.on_event = lambda why: self.timeline.record("stop", reason=why)
         self.controls = Controls(cfg.brain.goal, auto=not (paused or cfg.brain.start_paused))
@@ -205,7 +209,8 @@ class Controller:
         try:
             return Radio(rc.name, rc.peer_name, secret, rc.role, rc.peer_address, rc.channel,
                          lambda sender, text: self.controls.post_radio(sender, text),
-                         rc.ai_max_per_minute, BASE / "logs" / "radio.jsonl")
+                         rc.ai_max_per_minute, BASE / "logs" / "radio.jsonl",
+                         transport=rc.transport, port=rc.port, bind=rc.bind)
         except ValueError as e:
             log.error("Radio disabled: %s", e)
             return None
@@ -230,6 +235,7 @@ class Controller:
                 log.warning("Camera stream not started (%s)", e)
                 self.stream = None
         self.index.start()
+        self.camera.watch(self.cfg.camera.restart_after_s, self.camera_stuck)
         self.home.attach_camera(self.camera, self.drive)
         self.brain.start()
         self.listener.start()
@@ -298,10 +304,52 @@ class Controller:
             return text + f"  (Bob may use the lights himself: {'yes' if self.controls.home_ai else 'NO'})" * (sub == "status")
         return "usage: /home | on [brightness%] | off | check | ai on|off"
 
+    def camera_stuck(self, seconds: float, exit_fn=os._exit) -> None:
+        """The camera driver has hung. Stop the wheels, and, when a service will bring Bob back, restart him.
+
+        Nothing can un-hang the driver from inside the program, and a normal shutdown would wait on it too, so Bob
+        leaves with a failure code: the tmux loop in bob.service (or systemd) starts a fresh copy a few seconds later.
+        """
+        log.error("Camera has been stuck for %.0fs", seconds)
+        try:
+            self.drive.stop()
+        except Exception:
+            log.exception("Couldn't stop the wheels")
+        if os.environ.get("BOB_SUPERVISED") != "1":
+            log.error("Not restarting: Bob wasn't started by the service. Restart him yourself (and reboot the Pi if it repeats)")
+            return
+        log.error("Restarting Bob now (the service brings him back in a few seconds)")
+        try:
+            self.drive.close()                    # motor driver in standby before the process goes (only on this path)
+        except Exception:
+            log.exception("Couldn't close the motor driver cleanly")
+        for h in logging.getLogger("bob").handlers:
+            try:
+                h.flush()
+            except Exception:
+                pass
+        exit_fn(75)
+
+    def check_command(self) -> str | None:
+        """/check can take many seconds (network lookups, the camera), so it runs beside the console, never inside it."""
+        if not self._check_lock.acquire(blocking=False):
+            return "a check is already running"
+
+        def work():
+            try:
+                log.info("%s", format_report(run_checks(self, BASE)))
+            except Exception as e:
+                log.warning("/check failed: %s", e)
+            finally:
+                self._check_lock.release()
+
+        threading.Thread(target=work, name="check", daemon=True).start()
+        return "checking (this can take up to 20 seconds; the report appears in the log)..."
+
     def detach_command(self, by: str | None) -> str:
         """/detach: the same as Ctrl-B then d. Leaves tmux and keeps Bob running."""
         if by is not None:
-            return "/detach is for the console Bob was started in (friends: press Ctrl-C to leave)"
+            return "/detach only works in the tmux console Bob was started in (in bob-console, /detach or Ctrl-C leaves)"
         if not os.environ.get("TMUX"):
             return "Bob isn't running inside tmux, so there is nothing to detach from (use /quit to stop him)"
         import subprocess
@@ -526,6 +574,46 @@ class Controller:
         self.ranger.close()
         self.camera.close()
 
+    # ---- manual driving: for one person, or for everyone attached ------------------------------------------
+    @property
+    def drive_mode(self) -> bool:
+        """Is Bob under manual control (AI paused)? Who is driving is in drive_users."""
+        return self._drive_mode
+
+    @drive_mode.setter
+    def drive_mode(self, value: bool) -> None:
+        if value:                                   # old-style "drive mode on" means the console is driving
+            self.join_drive(None)
+            return
+        with self._drive_lock:
+            self._drive_mode = False
+            self.drive_users = set()
+
+    def driving_for(self, who: str | None) -> bool:
+        """Is this person's keyboard (or controller) driving? `None` is the console Bob runs in."""
+        with self._drive_lock:
+            return self._drive_mode and (who or "console") in self.drive_users
+
+    def join_drive(self, who: str | None, everyone: bool = False) -> None:
+        """Start manual driving for one person, or (everyone) for everyone attached right now."""
+        names = {who or "console"}
+        if everyone:
+            names |= {"console"} | set(getattr(getattr(self, "remote", None), "drivers", lambda: [])())
+            if self.gamepad is not None and self.gamepad.connected:
+                names.add("gamepad")
+        with self._drive_lock:
+            self.drive_users = (self.drive_users | names) if self._drive_mode else names
+            self._drive_mode = True
+
+    def leave_drive(self, who: str | None) -> None:
+        """One person stops driving. Manual control ends when nobody is left driving."""
+        with self._drive_lock:
+            if not self._drive_mode:
+                return
+            self.drive_users.discard(who or "console")
+            if not self.drive_users:
+                self._drive_mode = False
+
     # ---- overrides ------------------------------------------------------
     def estop(self, source: str = "console") -> None:
         self.follower.stop("emergency stop")
@@ -619,11 +707,21 @@ class Controller:
                 self.drive.stop()
                 return "AI paused; any thought in progress is cancelled"
             case "think":
+                if arg.lower() in ("change", "always"):
+                    self.cfg.brain.think_when = "change" if arg.lower() == "change" else "interval"
+                    c.wake.set()
+                    return ("Bob now thinks only when something changes (or every "
+                            f"{self.cfg.brain.idle_max_s:.0f}s)" if arg.lower() == "change"
+                            else f"Bob now thinks every {self.cfg.brain.tick_seconds:g}s")
                 if arg.lower() == "off":
                     return self.handle("/pause")
                 if arg.lower() == "on":
                     return self.handle("/resume")
-                return f"thinking is {'on' if c.auto else 'OFF'} - /think on|off"
+                return (f"thinking is {'on' if c.auto else 'OFF'}, "
+                        f"{'only when something changes' if self.cfg.brain.think_when == 'change' else 'every tick'}"
+                        f" ({self.brain.gate.skipped} looks skipped; thresholds: picture {self.cfg.brain.change_percent:g}%, "
+                        f"distance {self.cfg.brain.change_distance_cm:g} cm, routine look every {self.cfg.brain.idle_max_s:g}s)"
+                        " - /think on|off|change|always")
             case "model":
                 if not arg:
                     return f"model: {self.cfg.brain.model} (/model opus|sonnet|haiku)"
@@ -648,8 +746,13 @@ class Controller:
                 if self.drive.estop.is_set():
                     return "E-stop active - /clear first"
                 c.auto = False
-                self.drive_mode = True
-                return "manual drive: WASD/arrows, SPACE stop, Q/ESC exit"
+                everyone = arg.lower() == "all"
+                if arg and not everyone:
+                    return "usage: /drive (for you) or /drive all (for everyone attached)"
+                self.join_drive(by, everyone)
+                who = f"{by} is" if by else "you are"
+                return ("manual drive for EVERYONE attached right now: " if everyone else f"manual drive ({who} driving; others keep typing): ") + \
+                    "WASD/arrows, SPACE stop, Q/ESC exit"
             case "fwd":
                 return self.manual(0.6, 0.6, secs(), blocking=True)
             case "back":
@@ -753,7 +856,7 @@ class Controller:
                 self.background(self._announce_find, self.follower.session)
                 return "turning on the spot to look for a face (/find off to stop; the emergency stop works too)"
             case "check":
-                return format_report(run_checks(self, BASE))
+                return self.check_command()
             case "timeline":
                 return self.timeline_command(arg.lower().split())
             case "where":

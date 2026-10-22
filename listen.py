@@ -76,6 +76,24 @@ def wake_words_from(model: str) -> list[str]:
     return [w for w in re.split(r"[_\s-]+", stem.lower()) if w]
 
 
+def fix_name(text: str, name: str, aliases) -> str:
+    """Whisper often hears "Bob" as "Mom". If what was said OPENS with such a word (after any "hey"/"okay"), put the
+    name back. "Mom's coming over" is left alone (the apostrophe makes it a different word), and so is a "mom"
+    in the middle of a sentence."""
+    tokens = text.split()
+    wanted = {a.lower() for a in aliases}
+    for i, tok in enumerate(tokens[:3]):
+        norm = _norm(tok)
+        if norm in FILLER:
+            continue
+        if norm in wanted:
+            trail = re.search(r"[^\w']+$", tok)
+            tokens[i] = name + (trail.group(0) if trail else "")
+            return " ".join(tokens)
+        break
+    return text
+
+
 def has_word(text: str, word: str, within: int = 4) -> bool:
     """Is `word` (loosely matched) among the first few words of the transcript?"""
     return any(_similar(_norm(t), word) for t in text.split()[:within])
@@ -146,6 +164,7 @@ class Listener(threading.Thread):
         self._wake = threading.Event()
         self._quit = threading.Event()
         self._proc = None
+        self._terminated = None      # the recorder we last told to stop
         self._model = None
         self._failures = 0
         self._want_on = cfg.enabled
@@ -279,7 +298,26 @@ class Listener(threading.Thread):
     def _stop_proc(self) -> None:
         proc = self._proc
         if proc and proc.poll() is None:
+            self._terminated = proc      # remembered: by the time the listener thread looks, arecord may be gone already
             proc.terminate()  # unblocks a read in the listener thread
+
+    def _finish_proc(self, proc) -> str:
+        """Stop the recorder, wait for it, and return what it complained about ("" when it was just stopped by us)."""
+        we_stop_it = proc.poll() is None or self._terminated is proc      # we ended it (now, or from the Tab key a moment ago)
+        self._stop_proc()
+        try:
+            proc.wait(2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        err = ""
+        if proc.returncode not in (0, -15):               # -15 = we stopped it ourselves
+            err = proc.stderr.read().decode(errors="replace").strip()
+            if we_stop_it and "interrupted system call" in err.lower():
+                err = ""        # newer arecord complains when stopped mid-read; that is just us ending the recording
+        proc.stderr.close()
+        proc.stdout.close()
+        return err
 
     def _open(self):
         cmd = ["arecord", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(RATE), "-c", "1"]
@@ -456,17 +494,7 @@ class Listener(threading.Thread):
                     ptt = self.mode == "push-to-talk"
                     pcm = self._push_to_talk(proc) if ptt else self._hands_free(proc)
                 finally:
-                    self._stop_proc()
-                    try:
-                        proc.wait(2)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait()
-                    err = ""
-                    if proc.returncode not in (0, -15):  # -15 = we stopped it ourselves
-                        err = proc.stderr.read().decode(errors="replace").strip()
-                    proc.stderr.close()
-                    proc.stdout.close()
+                    err = self._finish_proc(proc)
                 if err:
                     raise RuntimeError(err.splitlines()[-1])
                 self._failures = 0
@@ -497,10 +525,14 @@ class Listener(threading.Thread):
 
         model = self._load_model()
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        name = self.cfg.wake_word.strip().title() or "Bob"
+        prompt = self.cfg.initial_prompt.strip() or f"The speaker is talking to a robot named {name}."
         segments, _ = model.transcribe(
             audio, language=self.cfg.language or None, beam_size=1,
-            vad_filter=True, condition_on_previous_text=False)
+            vad_filter=True, condition_on_previous_text=False, initial_prompt=prompt)
         parts = [s.text.strip() for s in segments
                  if not (s.no_speech_prob > 0.6 and s.avg_logprob < -0.8)]
         text = " ".join(p for p in parts if p).strip()
-        return "" if text.lower().strip(" .!?,") in HALLUCINATIONS else text
+        if text.lower().strip(" .!?,") in HALLUCINATIONS or text.strip().lower() == prompt.lower():
+            return ""                                  # (a hint the model just repeats back is not speech)
+        return fix_name(text, name, self.cfg.name_aliases)

@@ -42,6 +42,7 @@ class CameraConfig:
     height: int = 480
     jpeg_quality: int = 80
     rotate_180: bool = False
+    restart_after_s: float = 15.0   # if the camera driver hangs this long, stop the wheels and restart Bob (0 = never). Needs the service
     fov_deg: float = 62.0        # horizontal field of view: Pi Camera v2 ~62, Camera Module 3 ~66, most webcams 60-78
 
 
@@ -103,6 +104,8 @@ class MicConfig:
     wake_engine: str = "openwakeword"  # "openwakeword" (audio model), "text" (match the transcript) or "off" (hear everything)
     wake_model: str = "hey_jarvis"     # pretrained: hey_jarvis, alexa, hey_mycroft, hey_rhasspy; or a path to a trained .onnx
     wake_threshold: float = 0.5        # 0-1; raise if it triggers by accident, lower if it misses you
+    name_aliases: list = field(default_factory=lambda: ["mom", "bub", "bop", "mob", "bomb", "bobb"])   # what Whisper mishears the name as; fixed back to the name when it starts what you say
+    initial_prompt: str = ""           # a hint to the speech model; empty = "The speaker is talking to a robot named Bob." (helps it hear the name)
     wake_word: str = "bob"             # for wake_engine = "text" (and the fallback if openwakeword isn't installed)
     wake_window_s: float = 20.0        # after waking, Bob keeps listening this long without needing the wake word again
     wake_verifier: str = ""            # a voice-specific verifier you trained with wakeword_tools.py (see README); empty = none
@@ -115,8 +118,11 @@ class RadioConfig:
     name: str = "Bob"            # this robot's name
     peer_name: str = "John"      # the other robot's name
     role: str = "listen"         # "listen" (wait for the other robot) or "connect" (call it): one of each
-    peer_address: str = ""       # the other robot's Bluetooth address, needed for role = "connect"
-    channel: int = 3             # RFCOMM channel (1-30); both robots must use the same one
+    transport: str = "bluetooth" # "bluetooth" or "wifi" (the same signed messages over your network or a VPN such as Tailscale)
+    peer_address: str = ""       # the other robot's Bluetooth address, or (wifi) its host name or IP address; needed for role = "connect"
+    channel: int = 3             # Bluetooth only: RFCOMM channel (1-30); both robots must use the same one
+    port: int = 8765             # Wi-Fi only: the TCP port the listening robot opens; both robots must use the same one
+    bind: str = "0.0.0.0"        # Wi-Fi only, for the listening robot: which address to listen on ("0.0.0.0" = every network)
     ai_max_per_minute: int = 6   # most messages Claude may send per minute (keeps robot chatter cheap)
 
 
@@ -149,6 +155,7 @@ class TimelineConfig:
 class HomeConfig:
     enabled: bool = False        # let Bob turn the lights in his room on and off through Home Assistant (needs HA_TOKEN in .env)
     url: str = "http://homeassistant.local:8123"   # your Home Assistant, e.g. "http://192.168.1.20:8123"
+    wifi: list = field(default_factory=list)       # Wi-Fi network names where Home Assistant exists, e.g. ["Adam's House"]. Empty = try everywhere
     rooms: list = field(default_factory=list)      # the Home Assistant areas Bob may control, e.g. ["Kitchen", "Living Room"]
     location_entity: str = ""    # a sensor whose state is the room Bob is in, e.g. "sensor.bob_area" (Bluetooth room tracking in HA)
     quiet_start: str = "22:00"   # between these times Bob may not turn lights ON (off is fine). Empty = no quiet hours
@@ -217,7 +224,11 @@ class BrainConfig:
     model: str = "claude-opus-5-5"
     effort: str = "low"          # low | medium | high - low keeps reactions snappy
     max_tokens: int = 16000
-    tick_seconds: float = 2.0    # pause between autonomous ticks
+    tick_seconds: float = 2.0    # pause between autonomous ticks (in "change" mode: the least time between thoughts)
+    think_when: str = "interval" # "interval" = think every tick_seconds; "change" = only when something changed (cheaper, manual 04)
+    idle_max_s: float = 60.0     # "change" mode: think at least this often even if nothing happened
+    change_percent: float = 4.0  # "change" mode: think when this % of the picture changed noticeably
+    change_distance_cm: float = 15.0   # "change" mode: ...or when the distance sensor moved this far
     max_steps_per_tick: int = 8  # tool rounds per tick before forcing a new tick
     fallbacks: bool = True       # server-side refusal fallback
     start_paused: bool = False
@@ -258,6 +269,8 @@ CHOICES = {
     ("mic", "mode"): ("hands-free", "handsfree", "auto", "push-to-talk", "ptt", "push"),
     ("mic", "wake_engine"): ("openwakeword", "text", "off"),
     ("radio", "role"): ("listen", "connect"),
+    ("radio", "transport"): ("bluetooth", "wifi"),
+    ("brain", "think_when"): ("interval", "change"),
     ("music", "airplay_bus"): ("session", "system"),
     ("home", "tag_family"): ("tag36h11", "tag25h9", "aruco4x4_50"),
     ("brain", "effort"): ("low", "medium", "high", "xhigh", "max"),

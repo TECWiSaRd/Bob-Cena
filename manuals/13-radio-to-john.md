@@ -1,11 +1,11 @@
 # Manual 13: Radio to John
 
-Bob can talk to **John**, your friend's robot, over Bluetooth. Claude sends John short messages and reads
+Bob can talk to **John**, your friend's robot, over Bluetooth or over Wi-Fi. Claude sends John short messages and reads
 his replies, and you can watch the whole conversation.
 
-> **Status:** the message format, signing and connection logic were tested here with two simulated robots
-> talking over an ordinary network connection. **The real Bluetooth link hasn't been tried yet**, and it's
-> switched off until both robots are set up.
+> **Status:** the message format, signing and connection logic are tested with two simulated robots, and the
+> Wi-Fi link is tested over real network connections on one computer. **Neither link has been tried between
+> two real robots yet**, and the radio is switched off until both robots are set up.
 
 ---
 
@@ -18,9 +18,53 @@ his replies, and you can watch the whole conversation.
 - **Claude's side.** Bob has a `radio_send` tool. John's messages appear in Bob's next status report, under
   "Messages from John", as quoted text.
 
+## Bluetooth or Wi-Fi?
+
+| | Bluetooth (`transport = "bluetooth"`) | Wi-Fi (`transport = "wifi"`) |
+|---|---|---|
+| Range | the same room or building | anywhere the two robots can reach each other: the same Wi-Fi, or different houses over a VPN |
+| Setup | pair the two Pis | give the caller the other robot's address |
+| Privacy | encrypted once paired | signed, **not encrypted**: fine on a home network, use a VPN across the internet |
+| Wi-Fi interference | Bluetooth and Wi-Fi share the antenna | none |
+
+Everything else (the secret, the commands, the safety rules) is the same. Use Wi-Fi when the robots are in
+different houses; Bob is often at a friend's house, which is where Bluetooth range is no help.
+
+### Setting up Wi-Fi
+
+1. Make the secret (step 2 below) and put it in `.env` on both Pis.
+2. Pick which robot listens (say Bob). Find his address: on the same Wi-Fi, `hostname -I` on his Pi, or a
+   name such as `bobcena.local`; across houses use a **Tailscale** address (`tailscale ip -4`, a `100.x.x.x`
+   number, or his Tailscale machine name). Both Pis need Tailscale signed in to the same account for that.
+3. Bob, in `config.local.toml`:
+   ```toml
+   [radio]
+   enabled = true
+   transport = "wifi"
+   role = "listen"
+   ```
+4. John, the other way round:
+   ```toml
+   [radio]
+   enabled = true
+   transport = "wifi"
+   role = "connect"
+   peer_address = "100.64.0.12"      # Bob's address or host name
+   ```
+5. Restart both. Bob's log says `Radio: waiting for John on Wi-Fi, port 8765`, then `Radio: linked with John`.
+
+If John isn't Bob's Python code, give your friend the updated [JOHN_PROMPT.md](../JOHN_PROMPT.md): its radio
+code now has the Wi-Fi option.
+
+**Safety on the network.** The listener opens one TCP port (8765). Anyone who can reach it can connect, but
+every message must be signed with the shared secret or it is dropped, and a connection that doesn't send a
+valid hello within 10 seconds is cut off, so a stranger can't hog the only slot. Only one robot can be linked
+at a time. To keep the port off networks you don't trust, set `bind` to one address (such as Bob's Tailscale
+address) instead of `"0.0.0.0"`.
+
 ## Setting it up (once, on both robots)
 
-### 1. Pair the two Pis
+### 1. Pair the two Pis (Bluetooth only; skip for Wi-Fi)
 
 Pairing makes the Bluetooth link encrypted. On **both** Pis:
 ```bash
@@ -107,9 +151,12 @@ Under `[radio]`:
 | `enabled` | false | switch the radio on |
 | `name` | `"Bob"` | this robot's name |
 | `peer_name` | `"John"` | the other robot's name |
+| `transport` | `"bluetooth"` | `"bluetooth"` or `"wifi"`. Both robots must use the same |
 | `role` | `"listen"` | `"listen"` (wait) or `"connect"` (call). One robot must be each |
-| `peer_address` | `""` | the other robot's Bluetooth address (needed for `"connect"`) |
-| `channel` | 3 | the Bluetooth channel: both robots must use the same number |
+| `peer_address` | `""` | the other robot's Bluetooth address, or (Wi-Fi) its host name or IP address (needed for `"connect"`) |
+| `channel` | 3 | Bluetooth only: both robots must use the same number |
+| `port` | 8765 | Wi-Fi only: the TCP port; both robots must use the same number |
+| `bind` | `"0.0.0.0"` | Wi-Fi only, for the listener: which address to listen on |
 | `ai_max_per_minute` | 6 | how many messages Claude may send per minute |
 
 The shared secret is `BOB_RADIO_SECRET` in `.env`.
@@ -119,6 +166,7 @@ The shared secret is `BOB_RADIO_SECRET` in `.env`.
 | Problem | Fix |
 |---|---|
 | `Radio disabled: set BOB_RADIO_SECRET` | add the secret (16+ characters) to `.env` on both robots |
+| Wi-Fi: caller says `Connection refused` or times out | the listener isn't running yet, the address is wrong, a different `port`, or the robots can't reach each other (try `ping <address>`; with Tailscale check `tailscale status` on both) |
 | Stuck at `waiting for John` | is John running and set to `connect` with Bob's address? Check pairing: `bluetoothctl devices` |
 | `dropped a message that failed authentication` | the secrets differ, or John's name isn't "John": check both `.env` files and `peer_name` |
 | Link keeps dropping | distance or interference: move them closer; Wi-Fi and Bluetooth share the antenna |

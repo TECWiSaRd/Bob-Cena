@@ -115,7 +115,22 @@ about three-quarters of a word; a camera picture is a few hundred tokens):
 **These are estimates.** Your real spend depends on how often Bob ticks and how much each tick does. The
 status bar shows a running estimate (`$0.412`), and your Anthropic account shows the real bill.
 
-**Ways to spend less:** `/pause` whenever you're not watching; use `/model haiku` for testing; raise
+**The biggest saving: think only when something changes.** Normally Bob thinks every couple of seconds, even at
+an empty, still room, and every thought sends a camera picture to Claude. In change mode he checks a tiny
+greyscale copy of the picture on the Pi (free) and only thinks when:
+
+- someone sends a message (typed, spoken, or by radio),
+- more than 4% of the picture changed noticeably (a person walks in, the light changes, Bob drives somewhere),
+- the distance sensor reading moved by 15 cm or more, or
+- 60 seconds passed with nothing happening (a routine look, so he can still act on his goal).
+
+Turn it on with `think_when = "change"` under `[brain]` (best in `config.local.toml`), or live with
+`/think change` (back to normal: `/think always`). `/think` shows how many looks were skipped. Claude is told why
+he was woken. Tune it with `change_percent` (lower = jumpier), `idle_max_s` and `change_distance_cm`. The
+thought still costs the same; you just get far fewer of them. A moving Bob changes the picture constantly, so he
+still thinks often while he drives.
+
+**Other ways to spend less:** `/pause` whenever you're not watching; use `/model haiku` for testing; raise
 `tick_seconds`; keep `/effort low`; switch off features you don't need (the radio and music each add
 lines to every request).
 

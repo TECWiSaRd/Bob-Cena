@@ -210,7 +210,7 @@ cable, not the software: try another USB port or a powered hub.
 | `/motion off` | AI keeps seeing and talking, but can't drive |
 | `/camera off` | stop the camera sensor. No frames go to Claude or `/snap`, and Bob is told to stay put |
 | `/mute` | silence all audio |
-| `/drive` | manual WASD/arrow driving (Q/E arcs, X exits). Wheels stop when you let go |
+| `/drive [all]` | manual WASD/arrow driving for you (Q/E arcs, X exits); `all` = everyone attached. Wheels stop when you let go |
 | `/fwd` `/back` `/left` `/right` `/move L R S` | one-off manual moves |
 | `/speed 0.4` | global speed cap |
 | `/trim left 0.05`, `/trim right -0.03`, `/trim reset` | fix drift: `+0.05` makes that wheel 5% faster. `/trim` alone shows the current values |
@@ -279,7 +279,7 @@ declined, the API retries it on another model instead of stalling.
 
 Opus with a camera frame every few seconds adds up. Expect a few cents per
 tick, which can reach tens of dollars per hour of continuous autonomy. The
-status bar shows a running estimate. To spend less, raise `tick_seconds`, or
+status bar shows a running estimate. To spend less, set `think_when = "change"` (he thinks only when something changed: manual 04), raise `tick_seconds`, or
 set `model = "claude-sonnet-5-5"` or `"claude-haiku-5-5"` in `config.toml`.
 
 ## Sound system (Bluetooth and AirPlay)
@@ -518,7 +518,8 @@ can watch every message from the console. Everything stays between the two Pis.
    `BOB_RADIO_SECRET=<that text>`. Exchange it privately (not by pasting it in chat).
    Every message is signed with it, so a stranger who connects can't talk to Bob.
 3. In `config.toml` set `[radio] enabled = true`. Bob keeps `role = "listen"`;
-   John uses `role = "connect"` with `peer_address` set to Bob's address.
+   John uses `role = "connect"` with `peer_address` set to Bob's address. Set `transport = "wifi"` on both to use
+   your network or a VPN (Tailscale) instead of Bluetooth; see `manuals/13-radio-to-john.md`.
 4. Restart Bob. The log shows `Radio: waiting for John` and then `Radio: linked with John`.
 
 Give your friend [JOHN_PROMPT.md](JOHN_PROMPT.md). It's written to be pasted into their

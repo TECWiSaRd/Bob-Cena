@@ -20,6 +20,7 @@ from pathlib import Path
 
 import anthropic
 
+from change import ChangeGate, small
 from hardware import SOUNDS, Audio, Camera, Drive, clamp
 
 log = logging.getLogger("bob.brain")
@@ -300,6 +301,10 @@ class Controls:
             msgs, self._radio_inbox = self._radio_inbox, []
         return msgs
 
+    def has_mail(self) -> bool:
+        with self._lock:
+            return bool(self._inbox or self._radio_inbox)
+
     def take_inbox(self) -> list[str]:
         with self._lock:
             msgs, self._inbox = self._inbox, []
@@ -410,6 +415,7 @@ class Brain(threading.Thread):
         self.system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
         self.halt = threading.Event()
         self._stepping = False
+        self.gate = ChangeGate(cfg)
         self._gen = 0
         self._first_tick = True
 
@@ -418,6 +424,10 @@ class Brain(threading.Thread):
         while not self.halt.is_set():
             if not self.c.auto and not self.c.step_once.is_set():
                 self.c.wake.wait(0.5)
+                self.c.wake.clear()
+                continue
+            if self.cfg.think_when == "change" and not self.c.step_once.is_set() and not self._something_changed():
+                self.c.wake.wait(0.5)                        # nothing to think about: look again shortly (costs no tokens)
                 self.c.wake.clear()
                 continue
             self._stepping = self.c.step_once.is_set()
@@ -446,8 +456,19 @@ class Brain(threading.Thread):
             finally:
                 self.c.busy = False
                 self._stepping = False
+            if self.cfg.think_when == "change" and delay == self.cfg.tick_seconds:
+                delay = 0.5                                  # the gate, not this pause, decides when the next thought is
             self.c.wake.wait(delay)
             self.c.wake.clear()
+
+    def _something_changed(self) -> bool:
+        """In "change" mode: is the next thought worth paying for? (see change.py)"""
+        picture = small(self.camera.grab_bgr()) if self.camera.enabled else None
+        dist = self.drive.ranger.distance_cm if self.drive.ranger and self.drive.ranger.enabled else None
+        if self.gate.check(picture, dist, self.c.has_mail()):
+            log.info("Thinking because %s", self.gate.reason)         # so you can see what keeps waking him, and tune it
+            return True
+        return False
 
     def _allowed(self) -> bool:
         return ((self.c.auto or self._stepping) and not self.halt.is_set()
@@ -545,6 +566,8 @@ class Brain(threading.Thread):
 
     def _status(self, inbox: list[str], has_frame: bool) -> str:
         lines = [f"Tick {self.c.ticks} - {datetime.now():%A %H:%M:%S}"]
+        if self.cfg.think_when == "change" and self.gate.reason:
+            lines.append(f"(You only get a turn when something changes. This one is because: {self.gate.reason}.)")
         if self._first_tick:
             lines.append("You just powered on. Say hello and get your bearings.")
             self._first_tick = False

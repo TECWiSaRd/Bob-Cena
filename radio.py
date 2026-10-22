@@ -1,9 +1,14 @@
-"""Bluetooth radio between two robots (Bob and John). Standard library only, so this
+"""Radio between two robots (Bob and John), over Bluetooth or Wi-Fi. Standard library only, so this
 file can be copied into the other robot's code unchanged.
 
-Transport: a Bluetooth RFCOMM serial link. One robot listens (role "listen"), the other
+Transport "bluetooth": an RFCOMM serial link. One robot listens (role "listen"), the other
 calls it (role "connect", given the listener's Bluetooth address). Pair the two Pis
 first (see README) so the link is encrypted.
+
+Transport "wifi": the same thing over TCP. The listener opens a port (default 8765); the caller
+connects to it by host name or IP address (peer_address). Both robots must be able to reach
+each other: the same Wi-Fi network, or a VPN such as Tailscale. The messages are signed but NOT
+encrypted, so over the open internet use a VPN. Everything below is the same on both transports.
 
 Protocol: one JSON object per line (UTF-8, "\\n" terminated):
 
@@ -37,6 +42,8 @@ PING_EVERY = 10.0
 DEAD_AFTER = 40.0
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
 SIGNED_FIELDS = ("v", "id", "from", "ts", "type", "text")
+TRANSPORTS = ("bluetooth", "wifi")
+HANDSHAKE_S = 10.0       # a new connection must send one valid message within this long, or it is dropped
 
 
 def sign(secret: str, msg: dict) -> str:
@@ -68,15 +75,23 @@ def clean_text(text: str) -> str:
 
 class Radio(threading.Thread):
     def __init__(self, name, peer_name, secret, role, peer_address, channel, on_message,
-                 ai_max_per_minute=6, log_path: Path | None = None):
+                 ai_max_per_minute=6, log_path: Path | None = None,
+                 transport="bluetooth", port=8765, bind="0.0.0.0"):
         super().__init__(name="radio", daemon=True)
         for n in (name, peer_name):
             if not NAME_RE.match(n):
                 raise ValueError(f"robot names must be 1-20 letters, digits, - or _ (got {n!r})")
         if role not in ("listen", "connect"):
             raise ValueError('radio role must be "listen" or "connect"')
+        if transport not in TRANSPORTS:
+            raise ValueError(f'radio transport must be one of: {", ".join(TRANSPORTS)}')
         if role == "connect" and not peer_address:
-            raise ValueError('role "connect" needs the other robot\'s Bluetooth address (peer_address)')
+            raise ValueError('role "connect" needs the other robot\'s address (peer_address): '
+                             + ("its host name or IP address" if transport == "wifi" else "its Bluetooth address"))
+        if transport == "wifi" and not 0 <= int(port) <= 65535:     # 0 = let the system choose (tests)
+            raise ValueError("radio port must be 1-65535")
+        self.transport, self.port, self.bind = transport, int(port), bind
+        self.bound_port = 0              # the port actually listening (differs from `port` only when port is 0)
         self.name_, self.peer, self.secret, self.role = name, peer_name, secret, role
         self.peer_address, self.channel, self.on_message = peer_address, channel, on_message
         self.ai_max_per_minute, self.log_path = ai_max_per_minute, log_path
@@ -97,12 +112,24 @@ class Radio(threading.Thread):
 
     # ---- transports (replaced in tests) -------------------------------------------
     def _open_server(self):
+        if self.transport == "wifi":
+            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((self.bind, self.port))
+            server.listen(1)
+            self.bound_port = server.getsockname()[1]
+            return server
         server = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
         server.bind(("00:00:00:00:00:00", self.channel))
         server.listen(1)
         return server
 
     def _open_client(self):
+        if self.transport == "wifi":
+            sock = socket.create_connection((self.peer_address, self.port), timeout=10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            return sock
         sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
         sock.settimeout(10)
         try:
@@ -124,9 +151,13 @@ class Radio(threading.Thread):
             self.state = "off"
         return f"radio {'on' if on else 'off'}"
 
+    def where(self) -> str:
+        if self.transport == "wifi":
+            return f"Wi-Fi{', ' + self.peer_address if self.peer_address else ''}, port {self.bound_port or self.port}"
+        return f"Bluetooth{', ' + self.peer_address if self.peer_address else ''}, channel {self.channel}"
+
     def status(self) -> str:
-        return (f"radio {self.state}: {self.name_} <-> {self.peer} ({self.role}"
-                f"{', ' + self.peer_address if self.peer_address else ''}, channel {self.channel}); "
+        return (f"radio {self.state}: {self.name_} <-> {self.peer} ({self.role}, {self.where()}); "
                 f"sent {self.sent}, received {self.received}, rejected {self.rejected}"
                 + (f"; last problem: {self._last_error}" if self._last_error and not self.connected else ""))
 
@@ -225,7 +256,7 @@ class Radio(threading.Thread):
         if self._server is None:
             self._server = self._open_server()
             self._server.settimeout(1.0)
-            log.info("Radio: waiting for %s on channel %d", self.peer, self.channel)
+            log.info("Radio: waiting for %s on %s", self.peer, self.where())
         try:
             sock, addr = self._server.accept()
         except (socket.timeout, TimeoutError):
@@ -242,7 +273,7 @@ class Radio(threading.Thread):
         self._sock = sock
         self.state = "handshake"
         buf = b""
-        last_heard = last_ping = time.monotonic()
+        started = last_heard = last_ping = time.monotonic()
         try:
             self._send_raw(make_message(self.secret, self.name_, "hello"))
             while not self._quit.is_set() and self.enabled and self._sock is sock:
@@ -252,6 +283,8 @@ class Radio(threading.Thread):
                     last_ping = now
                 if now - last_heard > DEAD_AFTER:
                     raise OSError("no signal from the other robot")
+                if not self.connected and now - started > HANDSHAKE_S:
+                    raise OSError("no valid hello from whoever connected")     # a stranger can't hold the only slot
                 try:
                     chunk = sock.recv(1024)
                 except (socket.timeout, TimeoutError):

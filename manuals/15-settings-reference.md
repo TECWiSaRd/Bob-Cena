@@ -69,6 +69,7 @@ See [Camera, stream and dashboard](07-camera-stream-and-dashboard.md).
 | `width`, `height` | 640, 480 | picture size |
 | `jpeg_quality` | 80 | picture compression, 1-100 |
 | `rotate_180` | false | turn the picture upside down (for a camera mounted that way) |
+| `restart_after_s` | 15.0 | if the camera driver hangs this long, Bob stops the wheels and restarts himself (only when started by the service; 0 = never) |
 | `fov_deg` | 62.0 | the camera's horizontal field of view in degrees. Used by following and calibration |
 
 ## `[stream]`: video and dashboard
@@ -143,6 +144,8 @@ See [Microphone and wake word](11-microphone-and-wake-word.md).
 | `wake_model` | `"hey_jarvis"` | ★ yours: `"wakewords/hey_bob.onnx"`. A pretrained word (`hey_jarvis`, `alexa`, `hey_mycroft`, `hey_rhasspy`) or a model file |
 | `wake_threshold` | 0.5 | how sure the wake word model must be (0-1) |
 | `wake_word` | `"bob"` | the word for the `"text"` engine |
+| `name_aliases` | `["mom", "bub", "bop", "mob", "bomb", "bobb"]` | mishearings of the name; put back to "Bob" when one opens an utterance |
+| `initial_prompt` | `""` | hint for the speech model; empty = "The speaker is talking to a robot named Bob." |
 | `wake_window_s` | 20.0 | after waking, listen this long without needing the wake word again |
 | `wake_confirm` | false | ★ yours: `true`. Double-check the name appears in the transcript |
 | `wake_verifier` | `""` | experimental: a filter trained on your own voice |
@@ -157,8 +160,11 @@ See [Radio to John](13-radio-to-john.md).
 | `name` | `"Bob"` | this robot's name |
 | `peer_name` | `"John"` | the other robot's name |
 | `role` | `"listen"` | `"listen"` (wait) or `"connect"` (call) |
-| `peer_address` | `""` | the other robot's Bluetooth address, for `"connect"` |
+| `transport` | `"bluetooth"` | `"bluetooth"` or `"wifi"` (manual 13); the same on both robots |
+| `peer_address` | `""` | the other robot's Bluetooth address, or (Wi-Fi) its host name or IP, for `"connect"` |
 | `channel` | 3 | Bluetooth channel; the same on both robots |
+| `port` | 8765 | Wi-Fi TCP port; the same on both robots |
+| `bind` | `"0.0.0.0"` | Wi-Fi, listener only: the address to listen on |
 | `ai_max_per_minute` | 6 | messages Claude may send per minute |
 
 ## `[music]`: Bluetooth and AirPlay
@@ -261,7 +267,11 @@ See [The brain](04-brain-and-claude.md).
 | `model` | `"claude-opus-5-5"` | which Claude model. Others: `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`. Live: `/model` |
 | `effort` | `"low"` | how hard Claude thinks per request: `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Live: `/effort` |
 | `max_tokens` | 16000 | the longest response Claude may give in one request |
-| `tick_seconds` | 2.0 | pause between thinking rounds. Longer = cheaper |
+| `tick_seconds` | 2.0 | pause between thinking rounds (in `"change"` mode: the least time between thoughts). Longer = cheaper |
+| `think_when` | `"interval"` | `"change"` = think only when something changed: much cheaper. See manual 04 |
+| `idle_max_s` | 60.0 | `"change"` mode: think at least this often even if nothing happens |
+| `change_percent` | 4.0 | `"change"` mode: think when this % of the picture changed noticeably. Lower = more sensitive |
+| `change_distance_cm` | 15.0 | `"change"` mode: ...or when the distance sensor moved this far |
 | `max_steps_per_tick` | 8 | how many rounds of tools Claude may use in one tick |
 | `fallbacks` | true | if a request is declined, the API retries on another model (Opus and Sonnet only) |
 | `start_paused` | false | start with the AI paused. Recommended `true` if Bob starts at boot |

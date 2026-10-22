@@ -42,7 +42,7 @@ to 1) and a time. The wheels **always stop when the time runs out**.
 
 | Command | What it does |
 |---|---|
-| `/drive` | keyboard driving: W/A/S/D or arrows, Q/E to arc, Space to stop, X or Esc to leave. Pauses the AI |
+| `/drive` | keyboard driving: W/A/S/D or arrows, Q/E to arc, Space to stop, X or Esc to leave. Pauses the AI. On the shared console it is for you only; `/drive all` for everyone |
 | `/fwd [s]`, `/back [s]` | 60% power, 1 s unless you give a time |
 | `/left [s]`, `/right [s]` | spin at 60%, 0.5 s unless you give a time |
 | `/move L R S` | exact powers, for example `/move 0.3 0.6 1.5` curves left for 1.5 s |

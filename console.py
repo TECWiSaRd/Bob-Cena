@@ -66,7 +66,7 @@ class ConsoleUI:
                 ch = self.scr.get_wch()
             except curses.error:
                 continue
-            if self.ctrl.drive_mode:
+            if self.ctrl.driving_for(None):
                 self.drive_key(ch)
             else:
                 self.edit_key(ch)
@@ -95,7 +95,7 @@ class ConsoleUI:
         for i, (attr, text) in enumerate(view):
             self.scr.addnstr(1 + i, 0, text, w - 1, attr)
 
-        if self.ctrl.drive_mode:
+        if self.ctrl.driving_for(None):
             hint = " DRIVE: W/S fwd/back  A/D spin  Q/E arc  SPACE stop  X/ESC exit "
         else:
             hint = " SPACE (empty line)=E-STOP  TAB=talk  /help  PgUp/PgDn scroll "
@@ -171,7 +171,7 @@ class ConsoleUI:
             self.ctrl.drive.stop()
         elif key in ("x", "\x1b"):
             self.ctrl.drive.stop()
-            self.ctrl.drive_mode = False
+            self.ctrl.leave_drive(None)
             log.info("left manual drive - AI still paused, /resume to hand back control")
 
 

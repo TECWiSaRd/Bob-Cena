@@ -102,13 +102,16 @@ They see the same screen as the owner's console:
 | **Space** (empty line) | emergency stop (works for viewers too) |
 | **Tab** (empty line) | push-to-talk (operators) |
 | Page Up / Down | scroll |
-| **Ctrl-C** | leave. Bob keeps running; it doesn't quit him |
+| **Ctrl-C**, or `/detach` | leave. Bob keeps running; it doesn't quit him |
 
 Their name is shown on the status bar after `|`: `kai (operator)` or `sam (viewer, view only)`.
 
 Everyone sees every command and answer. If two people give conflicting commands, the latest one wins, and the
-speed cap and every other safety limit still apply. `/drive` (keyboard driving) is shared too: when one person
-turns it on, it's on for all, so tell people before you use it.
+speed cap and every other safety limit still apply. `/drive` (keyboard driving) is **just for the person who typed it**: only their
+keyboard switches to driving, and everyone else keeps typing normally. Several people can drive at once. Bob is under
+manual control (the AI is paused) while anyone drives. `/drive all` switches the keyboards of everyone attached **at that moment** to driving. Each person still leaves
+with their own X, and manual control ends when the last driver leaves. If a driver's terminal closes or their
+connection drops, they are taken out of driving automatically and the wheels stop.
 
 ---
 

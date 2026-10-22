@@ -305,4 +305,126 @@ class DetachTests(unittest.TestCase):
         self.assertFalse(self.ctrl.quit.is_set())
 
     def test_shared_console_users_cannot_detach_the_owner(self):
-        self.assertIn("friends", self.ctrl.handle("/detach", by="kai", role="operator"))
+        self.assertIn("only works in the tmux console", self.ctrl.handle("/detach", by="kai", role="operator"))
+
+
+class DriveScopeTests(unittest.TestCase):
+    """/drive is for the person who typed it; /drive all is for everyone."""
+
+    def setUp(self):
+        import bob
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        cfg = config.Config()
+        cfg.stream.enabled = False
+        self.ctrl = bob.Controller(cfg, sim=True, paused=True)
+        self.addCleanup(self.ctrl.shutdown)
+
+    def test_drive_is_just_for_the_person_who_asked(self):
+        self.ctrl.handle("/drive", by="kai", role="operator")
+        self.assertTrue(self.ctrl.drive_mode)                       # Bob is under manual control...
+        self.assertTrue(self.ctrl.driving_for("kai"))
+        self.assertFalse(self.ctrl.driving_for("sam"))              # ...but Sam's and the owner's keyboards are unchanged
+        self.assertFalse(self.ctrl.driving_for(None))
+
+    def test_the_local_console_is_a_person_too(self):
+        self.ctrl.handle("/drive")
+        self.assertTrue(self.ctrl.driving_for(None))
+        self.assertFalse(self.ctrl.driving_for("kai"))
+
+    def test_drive_all_is_for_everyone_attached_right_now(self):
+        self.ctrl.remote = SimpleNamespace(drivers=lambda: ["kai", "sam"])      # viewers are never in this list
+        self.ctrl.handle("/drive all", by="kai", role="operator")
+        self.assertTrue(all(self.ctrl.driving_for(w) for w in ("kai", "sam", None)))
+        self.assertFalse(self.ctrl.driving_for("a-viewer"))
+
+    def test_two_people_can_both_drive(self):
+        self.ctrl.handle("/drive", by="kai", role="operator")
+        self.ctrl.handle("/drive", by="sam", role="operator")
+        self.assertTrue(self.ctrl.driving_for("kai") and self.ctrl.driving_for("sam"))
+        self.ctrl.leave_drive("kai")
+        self.assertFalse(self.ctrl.driving_for("kai"))
+        self.assertTrue(self.ctrl.driving_for("sam") and self.ctrl.drive_mode)
+        self.ctrl.leave_drive("sam")
+        self.assertFalse(self.ctrl.drive_mode)                      # the last one out ends manual control
+
+    def test_after_drive_all_one_person_leaving_leaves_the_others_driving(self):
+        self.ctrl.remote = SimpleNamespace(drivers=lambda: ["kai", "sam"])
+        self.ctrl.handle("/drive all")
+        self.ctrl.leave_drive("kai")
+        self.assertFalse(self.ctrl.driving_for("kai"))
+        self.assertTrue(self.ctrl.driving_for("sam") and self.ctrl.driving_for(None) and self.ctrl.drive_mode)
+        self.ctrl.handle("/drive", by="kai", role="operator")                  # and Kai can rejoin; nothing is swallowed
+        self.assertTrue(self.ctrl.driving_for("kai"))
+
+    def test_the_old_style_setter_cannot_leave_manual_drive_with_nobody_driving(self):
+        self.ctrl.drive_mode = True
+        self.assertTrue(self.ctrl.driving_for(None))
+        self.ctrl.drive_mode = False
+        self.assertFalse(self.ctrl.drive_mode)
+        self.assertFalse(self.ctrl.driving_for(None))
+
+    def test_many_threads_joining_and_leaving_never_raise(self):
+        import threading as th
+        errors = []
+        def hammer(name):
+            try:
+                for i in range(300):
+                    self.ctrl.join_drive(name, everyone=(i % 7 == 0))
+                    self.ctrl.driving_for(name)
+                    self.ctrl.leave_drive(name)
+            except Exception as e:
+                errors.append(e)
+        threads = [th.Thread(target=hammer, args=(f"p{i}",)) for i in range(6)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        self.assertEqual(errors, [])
+
+    def test_estop_and_resume_end_it_for_everyone(self):
+        self.ctrl.handle("/drive all")
+        self.ctrl.estop("test")
+        self.assertFalse(self.ctrl.drive_mode)
+        self.assertFalse(self.ctrl.driving_for("kai"))
+        self.ctrl.handle("/clear")
+        self.ctrl.handle("/drive", by="kai", role="operator")
+        self.ctrl.handle("/resume")
+        self.assertFalse(self.ctrl.drive_mode)
+
+    def test_junk_argument_is_refused(self):
+        self.assertIn("usage", self.ctrl.handle("/drive everybody"))
+        self.assertFalse(self.ctrl.drive_mode)
+
+
+class CheckInBackgroundTests(unittest.TestCase):
+    def setUp(self):
+        import bob
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        cfg = config.Config()
+        cfg.stream.enabled = False
+        self.bob = bob
+        self.ctrl = bob.Controller(cfg, sim=True, paused=True)
+        self.addCleanup(self.ctrl.shutdown)
+
+    def test_a_slow_check_never_blocks_the_console(self):
+        import threading as th
+        gate, seen = th.Event(), []
+        self.addCleanup(setattr, self.bob, "run_checks", self.bob.run_checks)
+        self.bob.run_checks = lambda ctrl, base: (gate.wait(5), [("ok", "slow thing", "fine")])[1]
+        handler = logging.Handler()
+        handler.emit = lambda record: seen.append(record.getMessage())
+        logging.getLogger("bob").addHandler(handler)
+        self.addCleanup(logging.getLogger("bob").removeHandler, handler)
+        logging.getLogger("bob").setLevel(logging.INFO)
+        t0 = time.monotonic()
+        self.assertIn("checking", self.ctrl.handle("/check"))
+        self.assertLess(time.monotonic() - t0, 0.5)                             # the console is free again at once
+        self.assertIn("already running", self.ctrl.handle("/check"))
+        gate.set()
+        end = time.monotonic() + 3
+        while not any("slow thing" in m for m in seen) and time.monotonic() < end:
+            time.sleep(0.02)
+        self.assertTrue(any("slow thing" in m for m in seen))                    # the report arrives in the log
+        time.sleep(0.1)
+        self.assertIn("checking", self.ctrl.handle("/check"))                    # and it can be run again
+
+
+import logging  # noqa: E402

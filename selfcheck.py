@@ -53,12 +53,14 @@ def run_checks(ctrl, base: Path, run=_run, read=_read, which=shutil.which) -> li
         add(FAIL, "camera", "none found: Bob is blind (lsusb / rpicam-hello --list-cameras)")
     elif not cam.enabled:
         add(WARN, "camera", "switched off: /camera on")
+    elif getattr(cam, "stalled", False):
+        add(FAIL, "camera", "NOT RESPONDING: a picture has been pending for seconds. Restart Bob; reboot the Pi if it repeats")
     else:
         jpeg = cam.capture_jpeg()
         if jpeg:
             add(OK, "camera", f"picture received ({len(jpeg) // 1024} KB)")
         else:
-            add(FAIL, "camera", "found, but gave no picture")
+            add(FAIL, "camera", "found, but gave no picture" + (f" ({cam.last_error})" if getattr(cam, "last_error", "") else ""))
 
     audio = ctrl.audio
     engines = list(getattr(audio, "_engines", []))

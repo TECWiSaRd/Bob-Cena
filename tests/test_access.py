@@ -264,6 +264,26 @@ class WebTests(unittest.TestCase):
         self.assertEqual(data, b"")
         c.close()
 
+    def test_a_closed_tab_stops_counting_as_watching_even_with_no_new_frames(self):
+        srv = self.serve(self.policy("Kai's House"))
+        frames = iter([b"\xff\xd8jpeg"])
+        srv.hub.get = lambda: next(frames, None)               # one picture, then the camera has nothing new
+        srv.hub.interval = 0.02
+        c = http.client.HTTPConnection("127.0.0.1", srv._httpd.server_address[1], timeout=5)
+        c.request("GET", "/stream?token=kai-secret-12345")
+        r = c.getresponse()
+        r.read1(100)
+        deadline = time.monotonic() + 3
+        while srv.clients != 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(srv.clients, 1)
+        r.close()
+        c.close()                                              # a dashboard reload
+        deadline = time.monotonic() + 3
+        while srv.clients != 0 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(srv.clients, 0)
+
     def test_the_video_page_follows_the_same_rule(self):
         srv = self.serve(self.policy("Sam Home"))
         self.assertEqual(self.get(srv, "/snapshot.jpg?token=kai-secret-12345")[0], 401)

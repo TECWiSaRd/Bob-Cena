@@ -31,6 +31,7 @@ BUTTON, AXIS, INIT = 0x01, 0x02, 0x80
 PULSE_S = 0.4                          # each drive command lasts this long, so a lost signal means a stop
 TICK_S = 0.05
 CLEAR_HOLD_S = 1.5
+WHO = "gamepad"                        # the controller is its own driver, separate from the console and everyone attached
 
 
 def find_devices(pattern: str = "/dev/input/js*") -> list[str]:
@@ -81,12 +82,12 @@ class Gamepad(threading.Thread):
         if number == c.btn_estop:
             ctrl.estop("gamepad")
         elif number == c.btn_drive:
-            if ctrl.drive_mode:
+            if ctrl.driving_for(WHO):
                 ctrl.drive.stop()
-                ctrl.drive_mode = False
+                ctrl.leave_drive(WHO)
                 log.info("Gamepad: left manual drive - AI still paused, Y or /resume to hand back control")
             else:
-                note = ctrl.handle("/drive")
+                note = ctrl.handle("/drive", by=WHO)
                 log.info("Gamepad: %s", note)
         elif number == c.btn_resume:
             log.info("Gamepad: %s", ctrl.handle("/resume"))
@@ -117,7 +118,7 @@ class Gamepad(threading.Thread):
         if self._back_since is not None and now - self._back_since >= CLEAR_HOLD_S:
             self._back_since = None
             log.info("Gamepad: %s", ctrl.handle("/clear"))
-        if not ctrl.drive_mode or ctrl.drive.estop.is_set():
+        if not ctrl.driving_for(WHO) or ctrl.drive.estop.is_set():
             self._moving = False
             return
         left, right = self.wheels()

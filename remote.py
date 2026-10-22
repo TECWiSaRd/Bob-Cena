@@ -111,6 +111,7 @@ class RemoteConsole:
         self._sock: socket.socket | None = None
         self._halt = threading.Event()
         self.problem = ""
+        self._ino: int | None = None          # which socket file is ours
 
     # ---- lifecycle ----------------------------------------------------------------------------------
     def start(self) -> None:
@@ -130,6 +131,7 @@ class RemoteConsole:
             finally:
                 os.umask(old)
             os.chmod(path, 0o666)          # anyone may connect; who may DO anything is decided by group membership
+            self._ino = os.stat(path).st_ino
             sock.listen(8)
             sock.settimeout(0.5)
         except OSError as e:
@@ -177,7 +179,11 @@ class RemoteConsole:
         if self._sock:
             try:
                 self._sock.close()
-                os.unlink(self.cfg.socket)
+            except OSError:
+                pass
+            try:                                     # only remove OUR file: a newer Bob may have replaced it
+                if os.stat(self.cfg.socket).st_ino == self._ino:
+                    os.unlink(self.cfg.socket)
             except OSError:
                 pass
 
@@ -190,6 +196,11 @@ class RemoteConsole:
         with self._lock:
             who = [f"{c.name} ({c.role})" for c in self.clients]
         return f"on {self.cfg.socket}; " + (", ".join(who) if who else "nobody attached")
+
+    def drivers(self) -> list[str]:
+        """Names of the attached people who may drive (not watch-only viewers)."""
+        with self._lock:
+            return sorted({c.name for c in self.clients if c.role != "viewer"})
 
     def role_for(self, uid: int, name: str, groups: set[str]) -> str | None:
         if uid == self.owner_uid:
@@ -253,6 +264,11 @@ class RemoteConsole:
                 with self._lock:
                     if client in self.clients:
                         self.clients.remove(client)
+                    still_here = any(c.name == client.name for c in self.clients)
+                if not still_here and self.ctrl.driving_for(client.name):
+                    self.ctrl.drive.stop()                    # they vanished mid-drive: nobody is left holding the wheels
+                    self.ctrl.leave_drive(client.name)
+                    log.info("%s disconnected while driving: manual drive ended for them", client.name)
                 log.info("Shared console: %s left", client.name)
             try:
                 conn.close()
@@ -337,7 +353,7 @@ class RemoteConsole:
             if out:
                 log.info("%s", out)
         elif kind == "manual":
-            if ctrl.drive_mode:
+            if ctrl.driving_for(client.name):
                 try:
                     raw = [float(msg.get(k, 0)) for k in ("l", "r")]
                 except (TypeError, ValueError):
@@ -350,7 +366,7 @@ class RemoteConsole:
             ctrl.drive.stop()
         elif kind == "leave_drive":
             ctrl.drive.stop()
-            ctrl.drive_mode = False
+            ctrl.leave_drive(client.name)
             log.info("%s left manual drive - AI still paused, /resume to hand back control", client.name)
         elif kind == "ptt":
             log.info("%s", ctrl.listener.ptt_toggle())
@@ -362,13 +378,13 @@ class RemoteConsole:
         for c in targets:
             c.send({"type": "log", "level": level, "tag": tag, "line": line})
 
-    def _status(self) -> dict:
+    def _status(self, client: Client | None = None) -> dict:
         ctrl = self.ctrl
         return {"type": "status", "text": ctrl.status_line(), "estop": ctrl.drive.estop.is_set(),
-                "drive_mode": bool(ctrl.drive_mode)}
+                "drive_mode": bool(client and ctrl.driving_for(client.name))}      # each person sees their own
 
     def _push_status(self, client: Client, force: bool = False) -> None:
-        status = self._status()
+        status = self._status(client)
         if force or status != getattr(client, "_last_status", None):
             client._last_status = status
             client.send(status)
@@ -476,15 +492,24 @@ class RemoteController:
 
     @drive_mode.setter
     def drive_mode(self, value: bool) -> None:
-        if not value:
-            self._send({"type": "leave_drive"})
-        self._drive_mode = value
+        if not value:                               # leaving is ours to ask for; turning it on is up to Bob (/drive)
+            self.leave_drive()
+
+    def driving_for(self, who=None) -> bool:
+        return self._drive_mode
+
+    def leave_drive(self, who=None) -> None:
+        self._send({"type": "leave_drive"})
+        self._drive_mode = False
 
     def status_line(self) -> str:
         who = f"  |  {self.user} ({self.role}{', view only' if self.role == 'viewer' else ''})"
         return (self._status if self.connected else " DISCONNECTED ") + who
 
     def handle(self, line: str):
+        if line.strip().lower() in ("/detach", "/leave"):       # leave this screen; Bob keeps running
+            self.quit.set()
+            return None
         self._send({"type": "line", "text": line})
         return None                                   # the answer arrives in the log, for everyone to see
 

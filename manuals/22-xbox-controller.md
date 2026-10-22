@@ -40,6 +40,10 @@ check and change them.
 
 Pressing **Start** again leaves manual driving. The AI stays paused until you press **Y** or type `/resume`.
 
+**The controller is its own driver.** Start makes only the controller drive. Nobody's console keyboard (yours in tmux,
+or a friend's in `bob-console`) switches to driving keys, and stopping on the controller never changes anyone's
+console. `/drive all` includes the controller if it is connected.
+
 ## How it stays safe
 
 - The speed cap (`/speed`) still applies to everything the stick does.

@@ -30,6 +30,7 @@ class FakeHA:
         self.calls = []
         self.templates = []
         self.fail = False
+        self.hits = 0                      # every request that reached the server
         ha = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -44,6 +45,7 @@ class FakeHA:
                 self.wfile.write(body)
 
             def _auth(self):
+                ha.hits += 1
                 if self.headers.get("Authorization") != f"Bearer {TOKEN}":
                     self._reply(401, {"message": "no"})
                     return False
@@ -113,6 +115,41 @@ class HomeTests(unittest.TestCase):
 
     def home(self, **kw):
         return Home(cfg_for(self.ha.url, **kw), TOKEN, clock=self.clock, now=lambda: datetime(2026, 10, 18, self.hour, 0))
+
+    # ---- houses with no Home Assistant -------------------------------------------------------------------
+    def test_home_assistant_is_used_only_on_the_listed_wifi(self):
+        h = self.home(wifi=["Adam's House"])
+        h.wifi_reader = lambda: "Adam's House"
+        self.assertTrue(h.active())
+        self.assertEqual(h.where()[0], "Kitchen")
+        h.wifi_reader = lambda: "Rylan Home"                  # a friend's house: no Home Assistant there
+        self.assertFalse(h.active())
+
+    def test_at_a_house_without_it_nothing_is_called_and_nothing_is_reported(self):
+        h = self.home(wifi=["Adam's House"])
+        h.wifi_reader = lambda: "Rylan Home"
+        before = self.ha.hits
+        self.assertEqual(h.where()[0], None)
+        text, is_error = h.act("on")
+        self.assertTrue(is_error)
+        self.assertIn("no smart lights", text)
+        self.assertEqual(h.status_lines(10.0), [])             # Claude is told nothing about lights or rooms
+        level, detail = h.check()
+        self.assertEqual(level, "off")
+        self.assertIn("Rylan Home", detail)
+        self.assertEqual(h.locate()[0], "error")               # and he never spins around looking for a room tag
+        self.assertEqual(self.ha.hits, before)                  # not one request went to a Home Assistant that isn't there
+
+    def test_wired_or_unknown_wifi_counts_as_not_home_when_a_list_is_set(self):
+        h = self.home(wifi=["Adam's House"])
+        h.wifi_reader = lambda: None
+        self.assertFalse(h.active())
+        self.assertIn("can't tell", h.inactive_reason())
+
+    def test_with_no_list_it_is_tried_everywhere_as_before(self):
+        h = self.home()
+        h.wifi_reader = lambda: "Anywhere"
+        self.assertTrue(h.active())
 
     # ---- location -----------------------------------------------------------------------------------------
     def test_room_comes_from_the_ha_sensor(self):

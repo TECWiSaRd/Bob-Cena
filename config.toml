@@ -82,15 +82,20 @@ wake_threshold = 0.5
 wake_verifier = ""             # optional: a verifier trained on your own voice with wakeword_tools.py (see README)
 wake_confirm = true            # after the model fires, also check the transcript contains "bob" (cuts false wakes from "Hey Rob", "Hey Boss")
 wake_word = "bob"
+name_aliases = ["mom", "bub", "bop", "mob", "bomb", "bobb"]   # what the speech model mishears "Bob" as; put back to "Bob" when it OPENS what you say
+initial_prompt = ""        # a hint for the speech model; empty = "The speaker is talking to a robot named Bob."
 wake_window_s = 20.0
 
 [radio]
-enabled = false            # talk to the other robot over Bluetooth (needs BOB_RADIO_SECRET in .env)
+enabled = false            # talk to the other robot (needs BOB_RADIO_SECRET in .env)
 name = "Bob"
 peer_name = "John"
+transport = "bluetooth"    # "bluetooth", or "wifi" (same network, or a VPN such as Tailscale; manual 13)
 role = "listen"            # Bob listens; the other robot uses role = "connect" with Bob's address
-peer_address = ""          # only for role = "connect": the other robot's Bluetooth address
-channel = 3
+peer_address = ""          # only for role = "connect": the other robot's Bluetooth address, or (wifi) its host name / IP
+channel = 3                # Bluetooth only
+port = 8765                # Wi-Fi only
+bind = "0.0.0.0"           # Wi-Fi only, for the listener: "0.0.0.0" = every network; or one address to limit it
 ai_max_per_minute = 6      # cap on messages Claude may send per minute
 
 [music]
@@ -116,7 +121,8 @@ max_mb = 200               # the folder never grows beyond this
 
 [home]
 enabled = false           # true = Bob may turn the lights in his room on and off through Home Assistant (see manual 19)
-url = "http://homeassistant.local:8123"
+url = "http://homeassistant.local:8123"   # better: your Home Assistant's IP address
+wifi = []                  # Wi-Fi network name(s) where Home Assistant exists. Empty = try everywhere. At other houses he leaves it alone
 rooms = []                 # Home Assistant areas he may control, for example ["Kitchen", "Living Room"]
 location_entity = ""       # a sensor whose state is the room Bob is in, for example "sensor.bob_area"
 quiet_start = "22:00"      # no turning lights ON between these times (off is fine). Empty = never quiet
@@ -174,6 +180,10 @@ ai = false                # true = Claude may search past timeline and radio rec
 model = "claude-sonnet-5-5"
 effort = "low"             # low = quicker reactions; medium/high = more careful
 tick_seconds = 2.0
+think_when = "interval"    # "change" = think only when something changed (much cheaper; manual 04). "interval" = every tick
+idle_max_s = 60.0          # "change" mode: still think at least this often
+change_percent = 4.0       # "change" mode: think when this % of the picture changed noticeably
+change_distance_cm = 15.0  # "change" mode: ...or the distance sensor moved this far
 max_steps_per_tick = 8
 fallbacks = true
 start_paused = true

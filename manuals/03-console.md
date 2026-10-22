@@ -106,7 +106,7 @@ Commands start with `/`. Type `/help` in the console for a short list.
 
 | Command | What it does |
 |---|---|
-| `/check` | one report on whether he's ready: motors, camera (takes a picture), speaker, microphone, distance sensor, stream, Claude key, music, radio, **temperature, power supply, disk space, memory and Wi-Fi**. Each line is `ok`, `WARN`, `FAIL` or `off`. It moves nothing and costs nothing |
+| `/check` | one report on whether he's ready: motors, camera (takes a picture), speaker, microphone, distance sensor, stream, Claude key, music, radio, **temperature, power supply, disk space, memory and Wi-Fi**. Each line is `ok`, `WARN`, `FAIL` or `off`. It moves nothing and costs nothing. It runs in the background and the report appears in the log after up to 20 seconds, so the console stays usable |
 | `/timeline` | the event record (below). `/timeline on`, `off`, `show 20`, `clear` |
 | `/access` | the Wi-Fi network Bob is on and which dashboard tokens work on it right now (never shows a token). See [Camera, stream and dashboard](07-camera-stream-and-dashboard.md) |
 | `/who` | who is attached to the shared console, and as what (operator or viewer). See [Shared console](20-shared-console.md) |
@@ -139,7 +139,7 @@ These work even while Bob is paused, and respect the speed cap and the emergency
 
 | Command | What it does |
 |---|---|
-| `/drive` | manual drive mode with the keyboard (pauses the AI). See "Keys" above |
+| `/drive [all]` | manual drive mode with the keyboard (pauses the AI). Only **your** keyboard switches to driving; other people attached keep typing normally. `/drive all` switches everyone attached right now. See "Keys" above |
 | `/fwd [seconds]` | forward at 60% for 1 s (or the time you give) |
 | `/back [seconds]` | backward at 60% for 1 s |
 | `/left [seconds]` | spin left at 60% for 0.5 s |

@@ -106,6 +106,7 @@ class Home:
         self.scanner = None
         self.finder = None                    # TagFinder: turns to look for a tag
         self.moved = lambda: 0.0              # the drive's moved_total, set by the controller
+        self.wifi_reader = lambda: None       # the current Wi-Fi network name, set by the controller
         self._lock = threading.Lock()
         self._recent: deque[float] = deque()
         self._last_change: dict[str, float] = {}
@@ -131,6 +132,27 @@ class Home:
             self.problem = str(e)
             log.error("Home Assistant disabled: %s", e)
 
+    # ---- is there a Home Assistant at this house? ---------------------------------------------------------------
+    def active(self) -> bool:
+        """Is Home Assistant in use right now? With [home] wifi set, only while Bob is on one of those networks, so at
+        a friend's house (no Home Assistant) he makes no calls, takes no slow lookups and logs no warnings."""
+        if not self.enabled:
+            return False
+        if not self.cfg.wifi:
+            return True
+        try:
+            return self.wifi_reader() in self.cfg.wifi
+        except Exception:
+            return False
+
+    def inactive_reason(self) -> str:
+        try:
+            here = self.wifi_reader()
+        except Exception:
+            here = None
+        return (f"Bob is on Wi-Fi '{here}'" if here else "Bob can't tell which Wi-Fi he is on") + \
+            f", and Home Assistant is only used on: {', '.join(self.cfg.wifi)}"
+
     # ---- where is Bob? ----------------------------------------------------------------------------------
     def attach_camera(self, camera, drive) -> None:
         """Start looking for room tags (if any are configured) using Bob's camera. `drive` supplies how far he has gone."""
@@ -152,6 +174,8 @@ class Home:
         """Turn on the spot to look for a room tag. Returns (status, message): status is 'started', 'known' or 'error'."""
         if not self.enabled or self.finder is None:
             return "error", "room tags aren't set up: add them under [home] tags in config.toml (manual 19)"
+        if not self.active():
+            return "error", "there are no smart lights at this house, so there is no need to find your room"
         room, why = self.where()
         if room:
             return "known", f"You already know your room: the {room} ({why}). No need to look."
@@ -183,6 +207,8 @@ class Home:
 
     def where(self) -> tuple[str | None, str]:
         """(the configured room name or None, where that came from)."""
+        if not self.active():
+            return None, "Home Assistant isn't used on this network"
         if self.manual_room:
             return self.rooms.get(self.manual_room), "set by the operator"
         room, tag_why = self._tag_room()
@@ -305,6 +331,8 @@ class Home:
         """Run a light action in Bob's room. Returns (message, is_error)."""
         if not self.enabled:
             return "Home Assistant isn't set up.", True
+        if not self.active():
+            return "There are no smart lights to control at this house.", True
         action = action.lower()
         if action not in ("status", "on", "off"):
             return "action must be status, on or off", True
@@ -347,7 +375,7 @@ class Home:
     # ---- reports ----------------------------------------------------------------------------------------
     def status_lines(self, brightness: float | None) -> list[str]:
         """Lines for Claude's status report. Never contains device names or the token."""
-        if not self.enabled:
+        if not self.active():
             return []
         room, why = self.where()
         lines = [f"Room: {room} ({why})." if room else f"Room: unknown{f' ({why})' if why else ''}. "
@@ -367,6 +395,8 @@ class Home:
             return "off", "not enabled in config.toml"
         if not self.enabled:
             return "FAIL", self.problem
+        if not self.active():
+            return "off", f"not used on this network ({self.inactive_reason()})"
         try:
             self.client.ping()
         except HomeError as e:

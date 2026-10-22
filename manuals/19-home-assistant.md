@@ -92,6 +92,24 @@ tags and `/where` can use either form too. Use an IP address for `url` if `homea
 
 ---
 
+## Houses without Home Assistant
+
+Bob goes to several houses and only some have Home Assistant. Tell him which Wi-Fi networks it exists on:
+
+```toml
+[home]
+wifi = ["Adam's House"]        # the exact Wi-Fi network name(s); leave empty to try everywhere
+```
+
+On any other network he leaves the lights alone completely: he makes no calls to Home Assistant (so no slow lookups
+and no warnings), doesn't turn to look for room tags, and isn't told anything about lights, so he behaves as if the
+feature didn't exist. `/check` shows `home assistant  off  not used on this network (Bob is on Wi-Fi 'X', ...)`, and
+`/home` and `/where` say so. If he's on a cable, or can't tell his network, he treats it as not a home network
+whenever `wifi` is set. When he's back on your network it simply works again, with no restart.
+
+Tip: set `url` to your Home Assistant's IP address (`http://192.168.1.20:8123`) instead of `homeassistant.local`.
+Names ending in `.local` can take many seconds to look up when they fail.
+
 ## How Bob knows which room he's in
 
 Bob can't work out his position by counting wheel turns, so he needs to be told or to read it from somewhere.

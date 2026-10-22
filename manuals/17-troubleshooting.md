@@ -62,6 +62,7 @@ Each part's own manual has more detail.
 | Log: `No working camera`, Bob says he's blind | `lsusb` (USB camera listed?), `v4l2-ctl --list-devices`, or `rpicam-hello --list-cameras` |
 | `can't open /dev/video0` | try `[camera] device = 1`, or the number `v4l2-ctl` shows |
 | Picture upside down | `rotate_180 = true` |
+| Log: `Camera is not responding` (then `Restarting Bob now`) | the camera driver hung. Under the service Bob restarts himself in a few seconds. If it repeats: check the camera ribbon is seated and away from the motor wires, the power supply, and `sudo dmesg \| grep -i unicam`; a reboot clears a wedged driver. Started by hand, he stays up: restart him yourself. Setting: `[camera] restart_after_s` |
 | Bob says he can't see, camera works | `/camera on` (it may be switched off) |
 | Stream page asks for a password, or says `unauthorized` | add `?token=<BOB_STREAM_TOKEN>` to the address |
 | Dashboard "is off" | `BOB_STREAM_TOKEN` missing or under 8 characters |
