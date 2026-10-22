@@ -167,6 +167,12 @@ btn_slow = 4
 btn_back = 6
 btn_drive = 7
 
+[startup]
+stagger = true             # start the heavy parts one at a time, waiting for the CPU to calm down, so boot can't overload the Pi
+calm_cpu_percent = 60.0    # a part starts once the CPU is below this busy, twice in a row...
+max_wait_s = 25.0          # ...or after waiting this long
+step_pause_s = 2.0         # least pause between parts
+
 [index]
 enabled = true             # a searchable index of the timeline, notes, people, radio, warnings and manuals (/search)
 interval_s = 5.0

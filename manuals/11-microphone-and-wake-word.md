@@ -164,6 +164,21 @@ Under `[mic]`. Details in the [settings reference](15-settings-reference.md).
 | `wake_window_s` | 20 | listening window after waking |
 | `wake_verifier` | `""` | experimental voice filter (see TRAINING_HEY_BOB.md) |
 
+## When he is slow to answer after you speak
+
+The wait after you stop talking has four parts, and the log now times two of them:
+
+| Part | Typical | What controls it |
+|---|---|---|
+| 1. Waiting to be sure you finished | 0.8 s | `silence_ms` under `[mic]`. Try 500-600 for a quicker cut-off (too low cuts you off mid-sentence) |
+| 2. Turning your voice into text | 1-3 s | the log line `Transcribed 2.1s of speech in 1.4s`. `tiny.en` is the fastest model; `base.en` is 2-3 times slower. The model now loads when the mic is switched on, so the first sentence isn't slow |
+| 3. Claude thinking | 2-6 s | the log line `Claude replied in 3.2s`. `/model sonnet` or `/model haiku` is faster than Opus; `/effort low` helps; each tick sends a camera picture |
+| 4. Speaking the answer | 1 s+ | Piper makes the first sentence while the rest is generated |
+
+Read the two log lines after you speak to see which part is slow. If part 1 plus 2 is long, tune the microphone; if
+`Claude replied in` is long, that is the model. Bob must also be un-paused (`/resume`) to answer spoken words in
+hands-free mode.
+
 ## When he hears "Mom" instead of "Bob"
 
 The small speech model (`tiny.en`) often turns "Bob" into "Mom", "Bub" or "Bop". Three things help, cheapest first:

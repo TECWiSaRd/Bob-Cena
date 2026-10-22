@@ -731,7 +731,7 @@ def split_sentences(text: str, min_chars: int = 25) -> list[str]:
 class Audio:
     """Speaker: sound effects via aplay; speech via Piper (natural) with espeak-ng as the fallback."""
 
-    def __init__(self, cfg, sound_dir: Path, sim: bool = False, voice_dir: Path | None = None):
+    def __init__(self, cfg, sound_dir: Path, sim: bool = False, voice_dir: Path | None = None, warm_up: bool = True):
         self.cfg = cfg
         self.muted = False
         self.active = False   # True while sound is playing, so the microphone can ignore Bob himself
@@ -752,7 +752,13 @@ class Audio:
                 _synth(path, notes)
             self._sounds[name] = path
         self._engines = self._pick_engines()
-        if "piper" in self._engines and not self.sim:
+        if warm_up:
+            self.warm_up_async()
+
+    def warm_up_async(self) -> None:
+        """Load the Piper voice in the background (several seconds of CPU). The controller may delay this at boot."""
+        if "piper" in self._engines and not self.sim and not getattr(self, "_warming", False):
+            self._warming = True
             threading.Thread(target=self._warm_up, name="piper-warmup", daemon=True).start()
 
     def _piper_model(self) -> str | None:

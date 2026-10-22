@@ -61,5 +61,27 @@ class StopTests(unittest.TestCase):
         self.assertEqual(mic._finish_proc(proc), "")
 
 
+class PreloadTests(unittest.TestCase):
+    def test_the_speech_model_loads_when_the_mic_is_switched_on_not_at_the_first_sentence(self):
+        mic = listener()
+        mic.problem = lambda: None
+        loaded = []
+        mic._load_model = lambda: (loaded.append(1), time.sleep(0.1))
+        mic.set_enabled(True)
+        mic.set_enabled(True)                              # switching on twice does not start two loads
+        time.sleep(0.5)
+        self.assertEqual(len(loaded), 1)
+
+    def test_a_failed_preload_is_not_fatal(self):
+        mic = listener()
+        mic.problem = lambda: None
+        def boom():
+            raise RuntimeError("download failed")
+        mic._load_model = boom
+        mic.set_enabled(True)
+        time.sleep(0.3)
+        self.assertFalse(mic._preloading)
+
+
 if __name__ == "__main__":
     unittest.main()

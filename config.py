@@ -239,6 +239,14 @@ class BrainConfig:
 
 
 @dataclass
+class StartupConfig:
+    stagger: bool = True         # start the heavy parts one at a time, waiting for the CPU to calm down, so boot doesn't overload the Pi
+    calm_cpu_percent: float = 60.0   # a part starts once the CPU is below this busy for two checks in a row...
+    max_wait_s: float = 25.0     # ...or after waiting this long
+    step_pause_s: float = 2.0    # least pause between parts
+
+
+@dataclass
 class Config:
     drive: DriveConfig = field(default_factory=DriveConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
@@ -255,6 +263,7 @@ class Config:
     remote: RemoteConfig = field(default_factory=RemoteConfig)
     gamepad: GamepadConfig = field(default_factory=GamepadConfig)
     power: PowerConfig = field(default_factory=PowerConfig)
+    startup: StartupConfig = field(default_factory=StartupConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 

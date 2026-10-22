@@ -55,6 +55,13 @@ Each part's own manual has more detail.
 | `Unit pigpiod.service could not be found` | newer Pi OS doesn't include pigpio | not needed: Bob uses hardware PWM instead |
 | A power module's LED stays off | no input power, a charge-only cable, or a switch | try another cable and charger; check for a power switch |
 
+## The console screen
+
+| Problem | Fix |
+|---|---|
+| Stray text (warnings, camera messages) appears on top of the console | Bob now sends everything that libraries and helper programs write to the terminal into `logs/stderr.log` while the console is up. Read it with `tail -50 ~/bob/logs/stderr.log` (it also holds a traceback if Bob crashed). If you still see stray text, press `Ctrl-L`-style redraw by resizing the window, and tell me what it said |
+| Garbled in `bob-console` | make the terminal at least 100 columns wide |
+
 ## Camera
 
 | Problem | Fix |
@@ -179,3 +186,39 @@ When asking for help, paste:
 4. For hardware problems, **the relevant log lines from startup** (`head -40 ~/bob/logs/bob.log`).
 
 Never paste your `.env` file, API key, `BOB_STREAM_TOKEN`, `BOB_RADIO_SECRET` or AirPlay password.
+
+## The Pi freezes, drops off the network, or has to be unplugged
+
+**Is it the start-up rush?** At boot Bob loads the voice, the speech model, the wake word, OpenCV and the camera all
+at once. To spread that out, Bob now starts his parts **one at a time**, each waiting until the CPU has calmed
+down (the log shows `Starting the voice (CPU 35% busy)`, and so on, ending with `Startup finished`). The microphone,
+the heaviest part, comes last. The console is usable straight away, but the voice and the microphone can take a
+minute to come up after boot. Under the service, Bob also runs at a lower priority (`Nice=8`) so SSH and the Wi-Fi
+stay responsive when he is busy: re-run `./install.sh --service && sudo systemctl daemon-reload` for that. To turn
+staggering off, set `[startup] stagger = false`; to make it gentler, lower `calm_cpu_percent` or raise `step_pause_s`.
+
+A Pi that hangs leaves no log when it is unplugged, so set up a recorder **before** it happens:
+
+```bash
+cd ~/bob
+./install_vitals.sh               # one line every 10 s from boot: load, memory, temperature, power, Wi-Fi, router, whether Bob runs
+./install_vitals.sh --watchdog    # optional: a Pi that freezes completely reboots itself after ~15 s (needs a reboot to start)
+```
+
+After the next hang, power the Pi back on and read the end of the record:
+
+```bash
+tail -60 /var/log/bob-vitals.log
+```
+
+| What the last lines show | What it points to |
+|---|---|
+| `ROUTER-UNREACHABLE` appears first, everything else normal | Wi-Fi dropped, not the Pi: signal, router, or the Wi-Fi power-saving setting |
+| `load=` climbing past 5 and `avail=` MB falling toward 0 | overloaded or out of memory: something is using too much (look at what Bob was doing) |
+| `throttled=` not `0x0`, or `temp=` over 80 | power supply or heat |
+| lines simply stop, all normal until then | the whole Pi froze: the watchdog will now reboot it by itself; a power dip or SD card is likely |
+| `bob=0` | Bob had already stopped; check `~/bob/logs/bob.log` |
+
+Also: `sudo journalctl -b -1 -n 100 --no-pager` shows the system log of the previous boot (needs the journal kept across
+reboots: `sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald` once). Remove the recorder with
+`./install_vitals.sh --undo`.

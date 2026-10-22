@@ -178,6 +178,8 @@ class Listener(threading.Thread):
         self._oww_name = ""
         self._jobs: queue.Queue = queue.Queue(maxsize=3)   # utterances waiting for Whisper
         self._busy = False
+        self._preloading = False
+        self._model_lock = threading.Lock()
 
     # ---- operator controls (called from the console thread) -----------------
     def problem(self) -> str | None:
@@ -194,6 +196,9 @@ class Listener(threading.Thread):
                 return why
             self._failures = 0
         self.on = on
+        if on and self._model is None and not self._preloading:
+            self._preloading = True            # load the speech model now, not when the first sentence arrives (seconds)
+            threading.Thread(target=self._preload, name="whisper-preload", daemon=True).start()
         if not on:
             self._ptt.clear()
             self._stop_proc()
@@ -427,7 +432,12 @@ class Listener(threading.Thread):
                 continue
             self._busy = True
             try:
-                text = self._gate(self._transcribe(pcm), ptt)
+                started = time.monotonic()
+                heard = self._transcribe(pcm)
+                took = time.monotonic() - started
+                if heard:
+                    log.info("Transcribed %.1fs of speech in %.1fs", len(pcm) / 2 / RATE, took)   # where the time goes
+                text = self._gate(heard, ptt)
                 if text:
                     self.on_text(text, ptt)
             except Exception as e:
@@ -511,14 +521,23 @@ class Listener(threading.Thread):
                     time.sleep(2)
 
     # ---- speech to text ----------------------------------------------------
+    def _preload(self) -> None:
+        try:
+            self._load_model()
+        except Exception as e:
+            log.warning("Couldn't preload the speech model (%s); it will load when you first speak", e)
+        finally:
+            self._preloading = False
+
     def _load_model(self):
-        if self._model is None:
-            from faster_whisper import WhisperModel
-            log.info("Loading speech model %s (the first run downloads it)...", self.cfg.model)
-            self._model = WhisperModel(self.cfg.model, device="cpu", compute_type="int8",
-                                       cpu_threads=self.cfg.cpu_threads)
-            log.info("Speech model ready")
-        return self._model
+        with self._model_lock:                      # the preload thread and the first sentence must not both load it
+            if self._model is None:
+                from faster_whisper import WhisperModel
+                log.info("Loading speech model %s (the first run downloads it)...", self.cfg.model)
+                self._model = WhisperModel(self.cfg.model, device="cpu", compute_type="int8",
+                                           cpu_threads=self.cfg.cpu_threads)
+                log.info("Speech model ready")
+            return self._model
 
     def _transcribe(self, pcm: bytes) -> str:
         import numpy as np

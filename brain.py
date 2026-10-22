@@ -493,7 +493,10 @@ class Brain(threading.Thread):
                 log.info("Tick interrupted by operator")
                 return
             try:
+                asked = time.monotonic()
                 resp = self._call(messages)
+                if inbox and _ == 0:
+                    log.info("Claude replied in %.1fs", time.monotonic() - asked)     # the other half of the wait after you speak
             except Cancelled:
                 log.info("Thought cancelled by operator")
                 return

@@ -17,11 +17,15 @@ import signal
 import sys
 import threading
 import time
+import warnings
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-import config
+# urllib3 warns (harmlessly) when a SOCKS proxy is set in the environment without the optional PySocks package
+warnings.filterwarnings("ignore", message=".*SOCKS support in urllib3.*")
+
+import config  # noqa: E402
 from brain import MODEL_ALIASES, PRICES, Brain, Controls, Memory, People
 from hardware import SOUNDS, Audio, Camera, Drive
 from listen import Listener
@@ -38,6 +42,7 @@ from index import Index
 from home import Home
 from power import PowerControl
 from gamepad import Gamepad
+from startup import Stagger
 
 BASE = Path(__file__).resolve().parent
 log = logging.getLogger("bob")
@@ -159,6 +164,8 @@ class Controller:
         self.calibrating = None   # the Calibrator while a calibration run is in progress
         self.quit = threading.Event()
         self._check_lock = threading.Lock()
+        self._staging_halt = threading.Event()      # set at shutdown so parts still waiting their turn never start
+        self.stagger = None
         self._drive_mode = False
         self.drive_users: set[str] = set()            # who is driving by hand (/drive adds you, /drive all adds everyone attached)
         self._drive_lock = threading.RLock()
@@ -169,7 +176,7 @@ class Controller:
         self.camera = Camera(cfg.camera, sim)
         self.access = AccessPolicy.load(BASE / ".env", os.environ.get("BOB_STREAM_TOKEN", ""))
         self.stream = StreamServer(cfg.stream, self.camera, self.access) if cfg.stream.enabled else None
-        self.audio = Audio(cfg.audio, BASE / "sounds", sim, BASE / "voices")
+        self.audio = Audio(cfg.audio, BASE / "sounds", sim, BASE / "voices", warm_up=not cfg.startup.stagger)
         self.listener = Listener(cfg.mic, self.heard, self.audio, self.drive)
         self.listener.on_wake = lambda: self.background(self.audio.play, "chirp")
         self.music = MusicSystem(cfg.music, BASE, cfg.radio.name) if cfg.music.enabled else None
@@ -234,17 +241,25 @@ class Controller:
             except OSError as e:
                 log.warning("Camera stream not started (%s)", e)
                 self.stream = None
-        self.index.start()
-        self.camera.watch(self.cfg.camera.restart_after_s, self.camera_stuck)
-        self.home.attach_camera(self.camera, self.drive)
-        self.brain.start()
-        self.listener.start()
+        def vision():
+            self.camera.watch(self.cfg.camera.restart_after_s, self.camera_stuck)
+            self.home.attach_camera(self.camera, self.drive)
+
+        steps = [("the AI", self.brain.start), ("camera watch and room tags", vision)]
         if self.gamepad:
-            self.gamepad.start()
-        if self.music:
-            self.music.start()
+            steps.append(("the controller", self.gamepad.start))
+        steps += [("the voice", self.audio.warm_up_async), ("the search index", self.index.start)]
         if self.radio:
-            self.radio.start()
+            steps.append(("the radio", self.radio.start))
+        if self.music:
+            steps.append(("music", self.music.start))
+        steps.append(("the microphone", self.listener.start))     # the heaviest (speech model, wake word): last
+        if not self.cfg.startup.stagger:
+            for _, fn in steps:
+                fn()
+            return
+        self.stagger = Stagger(self.cfg.startup, stop=self._staging_halt.is_set)
+        threading.Thread(target=self.stagger.run, args=(steps,), name="startup", daemon=True).start()
 
     def music_command(self, words: list[str]) -> str:
         m, c = self.music, self.controls
@@ -551,6 +566,7 @@ class Controller:
 
     def shutdown(self) -> None:
         log.info("Shutting down")
+        self._staging_halt.set()
         self.follower.stop("shutting down")
         if self.music:
             self.music.stop()     # puts the music volume back if it was ducked
@@ -1042,7 +1058,7 @@ def main() -> None:
             run_headless(ctrl)
         else:
             from console import run_console
-            run_console(ctrl, logbuf)
+            run_console(ctrl, logbuf, BASE / "logs" / "stderr.log")
     except KeyboardInterrupt:
         pass
     finally:

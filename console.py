@@ -1,11 +1,14 @@
 """Curses console: status bar, live log tail, command line, manual drive."""
 from __future__ import annotations
 
+import contextlib
 import curses
 import logging
 import os
+import sys
 import textwrap
 from collections import deque
+from pathlib import Path
 
 log = logging.getLogger("bob.console")
 
@@ -175,6 +178,41 @@ class ConsoleUI:
             log.info("left manual drive - AI still paused, /resume to hand back control")
 
 
-def run_console(ctrl, logbuf: LogBuffer) -> None:
+@contextlib.contextmanager
+def quiet_stderr(path):
+    """Send everything written to the error stream (Python warnings, libcamera, a child program's complaints) to a
+    file while the screen is up. Written straight to the terminal, it lands on top of the curses display."""
+    try:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > 2_000_000:
+            path.replace(path.with_name(path.name + ".1"))
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    except OSError:
+        yield                                    # can't redirect: carry on as before
+        return
+    try:
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+    saved = os.dup(2)
+    os.dup2(fd, 2)
+    os.close(fd)
+    try:
+        yield
+    finally:
+        try:
+            sys.stderr.flush()
+        except (OSError, ValueError):
+            pass
+        os.dup2(saved, 2)                        # a crash message after the screen closes still reaches the terminal
+        os.close(saved)
+
+
+def run_console(ctrl, logbuf: LogBuffer, stderr_path=None) -> None:
     os.environ.setdefault("ESCDELAY", "25")  # make ESC respond instantly
-    curses.wrapper(lambda scr: ConsoleUI(scr, ctrl, logbuf).loop())
+    if stderr_path:
+        with quiet_stderr(stderr_path):
+            curses.wrapper(lambda scr: ConsoleUI(scr, ctrl, logbuf).loop())
+    else:
+        curses.wrapper(lambda scr: ConsoleUI(scr, ctrl, logbuf).loop())
