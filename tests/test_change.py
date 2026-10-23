@@ -145,3 +145,38 @@ class ThroughTheRobot(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SleepGateTests(unittest.TestCase):
+    def test_asleep_only_a_big_change_or_a_long_wait_wakes_the_thinking(self):
+        clock = Clock()
+        cfg = config.BrainConfig(think_when="change", tick_seconds=2.0, idle_max_s=60.0, change_percent=4.0)
+        gate = ChangeGate(cfg, clock=clock, sleep_cfg=config.SleepConfig(idle_max_s=900.0, change_percent=15.0))
+        still = small(picture())
+        self.assertTrue(gate.check(still, None, False, sleeping=True))
+        small_change = small(picture(patch=(200, 100, 330, 280, 230)))          # ~10% of the picture
+        clock.t += 15
+        self.assertFalse(gate.check(small_change, None, False, sleeping=True))   # would wake him when awake...
+        self.assertTrue(gate.check(small_change, None, False, sleeping=False))
+        clock.t += 15
+        dark = small(picture(level=20))
+        self.assertTrue(gate.check(dark, None, False, sleeping=True))             # lights on/off is a big change
+        clock.t += 899
+        self.assertFalse(gate.check(dark, None, False, sleeping=True))
+        clock.t += 2
+        self.assertTrue(gate.check(dark, None, False, sleeping=True))             # the routine look
+        self.assertIn("routine", gate.reason)
+
+    def test_asleep_he_never_thinks_faster_than_every_ten_seconds(self):
+        clock = Clock()
+        gate = ChangeGate(config.BrainConfig(think_when="change"), clock=clock, sleep_cfg=config.SleepConfig())
+        self.assertTrue(gate.check(small(picture()), None, False, sleeping=True))
+        clock.t += 4
+        self.assertFalse(gate.check(small(picture(level=20)), None, False, sleeping=True))
+        clock.t += 7
+        self.assertTrue(gate.check(small(picture(level=20)), None, False, sleeping=True))
+
+    def test_a_message_always_wakes_him(self):
+        gate = ChangeGate(config.BrainConfig(), clock=Clock(), sleep_cfg=config.SleepConfig())
+        gate.check(small(picture()), None, False, sleeping=True)
+        self.assertTrue(gate.check(small(picture()), None, True, sleeping=True))

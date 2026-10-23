@@ -38,6 +38,9 @@ This folder has one manual for each part of Bob. Each manual is written so you c
 | 20 | [Shared console](20-shared-console.md) | let friends with their own Pi login use the same console |
 | 21 | [Powering off](21-powering-off.md) | shut the Pi down safely, from the console or the dashboard |
 | 22 | [Xbox controller](22-xbox-controller.md) | drive Bob with a game controller |
+| 23 | [Alerts, versions and updates](23-alerts-and-updates.md) | phone alerts, a heartbeat that notices when he goes quiet, `/version`, `/update` |
+| 24 | [Sleep mode and going to a room](24-sleep-and-go-to-room.md) | rest at night; `/goto kitchen` |
+| 25 | [The Bob app](25-the-bob-app.md) | the Mac and Android app: pairing, security |
 
 Two more guides live in the main project folder:
 - [TRAINING_HEY_BOB.md](../TRAINING_HEY_BOB.md): training a better "Hey Bob" wake word.

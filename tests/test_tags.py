@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config  # noqa: E402
 from home import Home  # noqa: E402
-from tags import Tag, TagFinder, TagScanner, TagTracker  # noqa: E402
+from tags import Tag, TagFinder, TagGoer, TagScanner, TagTracker  # noqa: E402
 
 try:
     import cv2
@@ -581,6 +581,236 @@ class PrintableTags(unittest.TestCase):
     def test_bad_arguments(self):
         import tag_tools
         self.assertEqual(tag_tools.main(["make", "kitchen"]), 1)
+
+
+
+class GoWorld:
+    """Bob in a flat world: a tag at a fixed bearing and distance. He turns, then creeps forward; the tag looks bigger up close."""
+
+    FOV = 62.0
+
+    def __init__(self, bearing=40.0, distance=2.0, tag_id=1, obstacle_at=None):
+        self.t = 1000.0
+        self.heading, self.dist, self.bearing, self.tag_id = 0.0, distance, bearing, tag_id
+        self.obstacle_at = obstacle_at
+        self.moved = 0.0
+        self.moves = []
+        self.estop = threading.Event()
+        self.stop_reason = ""
+        self._until, self._l, self._r = 0.0, 0.0, 0.0
+
+    def clock(self):
+        return self.t
+
+    def sleep(self, s):
+        step = max(s, 0.001)
+        if self.t < self._until:
+            run = min(step, self._until - self.t)
+            self.heading = (self.heading + (self._l - self._r) / 2 * 180 * run) % 360
+            forward = (self._l + self._r) / 2
+            if forward > 0:
+                self.dist = max(0.05, self.dist - forward * 0.5 * run)
+            self.moved += run
+        self.t += step
+
+    def start(self, left, right, seconds):
+        self.moves.append((round(left, 2), round(right, 2)))
+        self.stop_reason = ""
+        if (left + right) / 2 > 0 and self.obstacle_at is not None and self.dist <= self.obstacle_at:
+            self.stop_reason = "obstacle 12 cm ahead - refused to drive forward"
+            return False
+        self._until, self._l, self._r = self.t + seconds, left, right
+        return True
+
+    def stop(self):
+        self.moves.append("stop")
+        self._until = 0.0
+
+    def moved_total(self):
+        return self.moved
+
+    def grab_bgr(self):
+        return (self.heading, self.dist)
+
+    def detect(self, frame):
+        heading, dist = frame
+        off = (self.bearing - heading + 180) % 360 - 180            # + means the tag is to his right
+        if abs(off) > self.FOV / 2:
+            return []
+        return [Tag(self.tag_id, 60.0 / dist, 0.5 + off / self.FOV)]
+
+
+class GoerTests(unittest.TestCase):
+    def make(self, **world):
+        self.w = GoWorld(**world)
+        cfg = config.HomeConfig(enabled=True, rooms=["Kitchen"], tags={"1": "Kitchen", "5": "Hallway"})
+        tracker = TagTracker(cfg, self.w.clock)
+        goer = TagGoer(cfg, tracker, lambda: self.w, self.w, self.w, clock=self.w.clock, sleep=self.w.sleep)
+        return goer, tracker
+
+    def go(self, goer, hops=(1,), seconds=90, allowed=lambda: True):
+        goer.active, goer.session, goer.target = True, goer.session + 1, "Kitchen"
+        goer._run(list(hops), seconds, allowed)
+
+    def test_it_finds_the_tag_turns_to_it_and_drives_up_to_it(self):
+        goer, tracker = self.make(bearing=100.0, distance=2.5)
+        self.go(goer)
+        self.assertTrue(goer.arrived, goer.result)
+        self.assertLessEqual(self.w.dist, 60.0 / 180 + 0.05)
+        self.assertEqual(self.w.moves[-1], "stop")
+        self.assertEqual(tracker.current(self.w.moved)[0], 1)         # and he now knows he is in the Kitchen
+
+    def test_it_never_drives_forward_without_seeing_the_tag(self):
+        goer, _ = self.make(bearing=100.0, distance=2.5)
+        looked = []
+        real = self.w.start
+
+        def watch(left, right, seconds):
+            if (left + right) / 2 > 0:
+                looked.append(bool(self.w.detect(self.w.grab_bgr())))
+            return real(left, right, seconds)
+
+        self.w.start = watch
+        self.go(goer)
+        self.assertTrue(looked and all(looked))
+
+    def test_it_stays_slow_and_steers_towards_the_tag(self):
+        goer, _ = self.make(bearing=10.0, distance=2.0)
+        self.go(goer)
+        forward = [m for m in self.w.moves if m != "stop" and (m[0] + m[1]) / 2 > 0]
+        self.assertTrue(forward)
+        self.assertTrue(all(max(m) <= 0.35 * 1.31 for m in forward))
+
+    def test_an_obstacle_ends_it_and_it_says_so(self):
+        goer, _ = self.make(bearing=5.0, distance=2.0, obstacle_at=1.2)
+        self.go(goer)
+        self.assertFalse(goer.arrived)
+        self.assertIn("blocked", goer.result)
+        self.assertIn("obstacle", goer.result)
+        self.assertEqual(self.w.moves[-1], "stop")
+
+    def test_no_tag_anywhere_gives_up_after_a_circle(self):
+        goer, _ = self.make(bearing=100.0)
+        self.w.bearing = 100.0
+        self.w.tag_id = 7                                              # a different tag: the Kitchen's never appears
+        self.go(goer)
+        self.assertFalse(goer.arrived)
+        self.assertIn("couldn't find tag 1", goer.result)
+
+    def test_a_route_goes_through_each_tag_in_turn(self):
+        goer, tracker = self.make(bearing=20.0, distance=1.5, tag_id=5)
+        order = []
+        real = self.w.detect
+
+        def detect(frame):
+            tags = real(frame)
+            if self.w.dist <= 0.32 and self.w.tag_id == 5:               # arrived at the hallway tag: the kitchen tag appears
+                order.append("hall")
+                self.w.tag_id, self.w.dist, self.w.bearing = 1, 1.5, 200.0
+            return tags
+
+        self.w.detect = detect
+        self.go(goer, hops=(5, 1))
+        self.assertTrue(goer.arrived, goer.result)
+        self.assertEqual(order, ["hall"])
+
+    def test_emergency_stop_pause_and_stop_end_it(self):
+        goer, _ = self.make(bearing=100.0, distance=3.0)
+        self.w.estop.set()
+        self.go(goer)
+        self.assertIn("emergency stop", goer.result)
+        goer, _ = self.make(bearing=100.0, distance=3.0)
+        self.go(goer, allowed=lambda: False)
+        self.assertIn("paused", goer.result)
+
+    def test_start_refuses_without_a_camera_tags_or_while_stopped(self):
+        goer, _ = self.make()
+        self.assertIn("no tag", goer.start("Kitchen", [], 60))
+        self.w.estop.set()
+        self.assertIn("emergency stop", goer.start("Kitchen", [1], 60))
+
+
+class GotoThroughHome(unittest.TestCase):
+    def setUp(self):
+        self.w = GoWorld(bearing=30.0, distance=2.0)
+        self.cfg = config.HomeConfig(enabled=True, url="http://127.0.0.1:9", rooms=["Kitchen", "Living Room"],
+                                     tags={"1": "Kitchen", "2": "Living Room", "5": "Hallway"}, paths={"Kitchen": [5, 1]})
+        self.h = Home(self.cfg, TOKEN)
+        self.h.tracker = TagTracker(self.cfg, self.w.clock)
+        self.h.goer = TagGoer(self.cfg, self.h.tracker, lambda: self.w, self.w, self.w, clock=self.w.clock, sleep=self.w.sleep)
+
+    def test_unknown_rooms_list_the_ones_that_work(self):
+        status, text = self.h.goto("garage")
+        self.assertEqual(status, "error")
+        self.assertIn("Hallway, Kitchen, Living Room", text)
+
+    def test_names_match_loosely_and_a_configured_route_is_used(self):
+        self.h.goer.start = lambda room, hops, seconds, allowed=None: self.__dict__.update(hops=hops, room=room)
+        self.assertEqual(self.h.goto("kitchen")[0], "started")
+        self.assertEqual((self.hops, self.room), ([5, 1], "Kitchen"))
+        self.h.goto("LIVING  room")
+        self.assertEqual(self.hops, [2])
+
+    def test_already_there_means_no_driving(self):
+        for _ in range(2):
+            self.w.t += 0.3
+            self.h.tracker.observe([Tag(1, 90, 0.5)], 0.0)
+        self.h.moved = lambda: 0.0
+        self.h.tracker._clock = self.w.clock
+        status, text = self.h.goto("Kitchen")
+        self.assertEqual(status, "known")
+
+    def test_a_bad_route_disables_home_assistant_with_a_clear_reason(self):
+        bad = config.HomeConfig(enabled=True, rooms=["Kitchen"], tags={"1": "Kitchen"}, paths={"Kitchen": [9]})
+        h = Home(bad, TOKEN)
+        self.assertFalse(h.enabled)
+        self.assertIn("paths", h.problem)
+
+    def test_not_at_a_house_without_the_feature(self):
+        h = Home(config.HomeConfig(enabled=True, rooms=["Kitchen"], tags={"1": "Kitchen"}, wifi=["Adam's House"]), TOKEN)
+        h.wifi_reader = lambda: "Rylan Home"
+        h.goer = object()
+        self.assertEqual(h.goto("Kitchen")[0], "error")
+
+
+class GotoThroughTheRobot(unittest.TestCase):
+    def setUp(self):
+        import bob
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        cfg = config.Config()
+        cfg.stream.enabled = False
+        cfg.home.enabled, cfg.home.url = True, "http://127.0.0.1:9"
+        cfg.home.rooms, cfg.home.tags = ["Kitchen"], {"1": "Kitchen"}
+        os.environ["HA_TOKEN"] = TOKEN
+        self.addCleanup(os.environ.pop, "HA_TOKEN", None)
+        self.ctrl = bob.Controller(cfg, sim=True, paused=False)
+        self.addCleanup(self.ctrl.shutdown)
+        self.w = GoWorld()
+        self.ctrl.home.tracker = TagTracker(cfg.home, self.w.clock)
+        self.ctrl.home.goer = TagGoer(cfg.home, self.ctrl.home.tracker, lambda: self.w, self.w, self.w,
+                                      clock=self.w.clock, sleep=self.w.sleep)
+
+    def test_go_to_room_is_a_tool_only_when_tags_are_set_up(self):
+        self.assertIn("go_to_room", {t["name"] for t in self.ctrl.brain.tools})
+
+    def test_commands_explain_and_respect_the_overrides(self):
+        self.assertIn("Kitchen", self.ctrl.handle("/goto"))
+        self.ctrl.handle("/motion off")
+        self.assertIn("movement is disabled", self.ctrl.handle("/goto kitchen"))
+        self.ctrl.handle("/motion on")
+        self.ctrl.handle("/sleep on")
+        self.assertIn("asleep", self.ctrl.handle("/goto kitchen"))
+        self.ctrl.handle("/sleep off")
+        self.ctrl.drive.emergency_stop()
+        self.assertIn("E-stop", self.ctrl.handle("/goto kitchen"))
+
+    def test_claudes_tool_is_blocked_by_estop_sleep_and_motion_off(self):
+        block = type("B", (), {"name": "go_to_room", "type": "tool_use", "input": {"room": "Kitchen"}, "id": "x"})()
+        self.ctrl.handle("/sleep on")
+        self.assertIn("sleep time", self.ctrl.brain._run_tool(block)["content"])
+        self.ctrl.handle("/sleep off")
+        self.ctrl.handle("/motion off")
+        self.assertIn("disabled movement", self.ctrl.brain._run_tool(block)["content"])
 
 
 if __name__ == "__main__":

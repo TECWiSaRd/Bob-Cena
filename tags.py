@@ -247,3 +247,153 @@ class TagFinder:
                 del self.outcomes[old]
             self.active = False
             log.info("LOCATE ended: %s", self.result)
+
+
+class TagGoer:
+    """Drives to a room's tag: turns to find it, then goes forward a little at a time, steering to keep it in the middle,
+    until it looks big enough (he is at it). Stop-and-go: he only moves forward right after seeing the tag, never blind,
+    and the distance sensor's reflex still refuses to drive into something. Several tags make a route (door, then room)."""
+
+    period = 0.125
+    turn_s = 0.4          # searching: turn this long...
+    hold_s = 1.0          # ...then hold still and look
+    settle_s = 0.3
+    pulse_s = 0.35        # approaching: go forward this long, then stop and look again
+    nudge_s = 0.15        # ...or turn this long to centre the tag
+    centre = 0.10         # the tag counts as centred within this fraction of the picture width
+    max_search_s = 30.0   # give up looking for a tag that never appears after turning this long
+
+    def __init__(self, cfg, tracker, detector_getter, camera, drive, clock=time.monotonic, sleep=time.sleep):
+        self.cfg, self.tracker, self._detector, self.camera, self.drive = cfg, tracker, detector_getter, camera, drive
+        self._clock, self._sleep = clock, sleep
+        self.active = False
+        self.arrived = False
+        self.result = ""
+        self.target = ""
+        self.session = 0
+        self.outcomes: dict[int, tuple[bool, str]] = {}
+        self._stop = threading.Event()
+        self._why = ""
+        self._thread: threading.Thread | None = None
+
+    def start(self, room: str, tag_ids: list[int], seconds: float, allowed=lambda: True) -> str | None:
+        if self.active:
+            return "already on the way somewhere"
+        if self.drive.estop.is_set():
+            return "the emergency stop is on"
+        if not tag_ids:
+            return "no tag is set for that room"
+        if self._detector() is None:
+            return "the tag scanner isn't running (is the camera on, and does OpenCV have the aruco module?)"
+        if self.camera.grab_bgr() is None:
+            return "no camera picture (is the camera on?)"
+        self._stop.clear()
+        self.result, self.arrived, self.target = "", False, room
+        self.session += 1
+        self.active = True
+        self._thread = threading.Thread(target=self._run, args=(list(tag_ids), max(5.0, min(seconds, 300.0)), allowed),
+                                        name="tag-goer", daemon=True)
+        self._thread.start()
+        return None
+
+    def stop(self, why: str = "stopped by the operator") -> None:
+        self._why = why
+        self._stop.set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        if self._thread:
+            self._thread.join(timeout)
+        return not self.active
+
+    def outcome(self, sid: int, timeout: float):
+        end = self._clock() + timeout
+        while sid not in self.outcomes and self._clock() < end:
+            self._sleep(0.05)
+        return self.outcomes.get(sid)
+
+    def _look(self):
+        frame = self.camera.grab_bgr()
+        if frame is None:
+            return None, None
+        tags = self._detector().detect(frame)
+        self.tracker.observe(tags, self.drive.moved_total())      # any room tag he passes still updates where he is
+        return frame, tags
+
+    def _run(self, hops: list[int], seconds: float, allowed) -> None:
+        sid = self.session
+        t0 = self._clock()
+        why, looks, idx, last_side, spun = "time ran out", 0, 0, 1, 0.0
+        speed = max(0.1, min(1.0, self.cfg.goto_speed))
+        log.info("GOTO started: %s (tags %s, up to %.0fs)", self.target, hops, seconds)
+        try:
+            while True:
+                if self._stop.is_set():
+                    why = self._why
+                    break
+                if self.drive.estop.is_set():
+                    why = "emergency stop"
+                    break
+                if not allowed():
+                    why = "paused by the operator"
+                    break
+                if self._clock() - t0 >= seconds:
+                    break
+                frame, tags = self._look()
+                looks += 1
+                if frame is None:
+                    why = "lost the camera picture"
+                    break
+                want = hops[idx]
+                seen = next((t for t in tags if t.id == want), None)
+                if seen is None:
+                    # not in view: turn (toward where it was last seen) a bit, hold still, look again
+                    if spun >= self.max_search_s:                          # turned all the way round and never saw it
+                        why = f"couldn't find tag {want} after turning all the way round"
+                        break
+                    s = max(0.1, min(1.0, self.cfg.tag_search_speed))
+                    self.drive.start(s * last_side, -s * last_side, self.turn_s)
+                    self._sleep(self.turn_s)
+                    self.drive.stop()
+                    spun += self.turn_s + self.hold_s
+                    self._sleep(self.hold_s)
+                    continue
+                spun = 0.0
+                err = seen.cx - 0.5
+                last_side = 1 if err >= 0 else -1
+                if seen.size_px >= self.cfg.tag_arrive_px:
+                    idx += 1
+                    if idx >= len(hops):
+                        self.arrived, why = True, "arrived"
+                        break
+                    continue                                               # on to the next tag of the route
+                if abs(err) > self.centre:
+                    s = max(0.1, min(0.5, speed))
+                    self.drive.start(s * last_side, -s * last_side, self.nudge_s)
+                    self._sleep(self.nudge_s)
+                    self.drive.stop()
+                else:
+                    steer = max(-0.3, min(0.3, err * 1.5))
+                    left, right = speed * (1 + steer), speed * (1 - steer)
+                    moved = self.drive.start(left, right, self.pulse_s)
+                    if moved is False or self.drive.stop_reason:
+                        why = f"blocked: {self.drive.stop_reason or 'the drive refused to move'}"
+                        break
+                    self._sleep(self.pulse_s)
+                    self.drive.stop()
+                    if self.drive.stop_reason:
+                        why = f"blocked: {self.drive.stop_reason}"
+                        break
+                self._sleep(self.settle_s)
+        except Exception as e:
+            log.exception("Go-to-room crashed")
+            why = f"error: {e}"
+        finally:
+            self.drive.stop()
+            took = self._clock() - t0
+            self.result = (f"arrived at the {self.target} after {took:.0f}s" if self.arrived
+                           else f"didn't reach the {self.target} ({why}) after {took:.0f}s")
+            self.outcomes[sid] = (self.arrived, self.result)
+            for old in [k for k in self.outcomes if k <= sid - 5]:
+                del self.outcomes[old]
+            self.active = False
+            log.info("GOTO ended: %s", self.result)

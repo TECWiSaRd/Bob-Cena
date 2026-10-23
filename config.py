@@ -53,6 +53,9 @@ class StreamConfig:
     port: int = 8080
     fps: float = 10.0
     dashboard: bool = True       # phone control page at /dash; only active when BOB_STREAM_TOKEN is set
+    https: bool = True           # the Bob app's secure port (a certificate is made on first start; pair with /pair). Needs openssl
+    https_port: int = 8443
+    bonjour: bool = True         # announce Bob on the local network so the app can find him (needs avahi-utils on the Pi)
 
 
 @dataclass
@@ -172,6 +175,10 @@ class HomeConfig:
     tag_max_move_s: float = 20.0 # ...and until the wheels have run this many seconds since it (he can't feel leaving a room)
     tag_scan_hz: float = 3.0     # how often the camera is checked for tags
     tag_search_speed: float = 0.35   # /locate and find_my_room: how fast Bob turns on the spot looking for a tag
+    tag_arrive_px: float = 180.0 # going to a room: he has arrived when its tag looks this wide in the picture (he is right at it)
+    goto_speed: float = 0.35     # ...and how fast he approaches it (the speed cap still applies)
+    goto_seconds: float = 90.0   # ...and how long he tries before giving up
+    paths: dict = field(default_factory=dict)   # optional routes, room -> tag numbers to reach in order, e.g. { Kitchen = [5, 1] } (door tag 5, then the kitchen tag)
     tag_search_seconds: float = 25.0 # ...and how long he looks before giving up
 
 
@@ -239,6 +246,24 @@ class BrainConfig:
 
 
 @dataclass
+class AlertsConfig:
+    enabled: bool = False        # needs HEARTBEAT_URL and/or NOTIFY_URL in .env (manual 23)
+    heartbeat_every_s: float = 60.0   # how often Bob pings the dead man's switch
+    cooldown_s: float = 300.0    # least time between two notifications of the same kind
+    notify: list = field(default_factory=lambda: ["restart", "estop", "camera", "power", "update", "vitals"])   # which events send a notification; also: start, stopped
+
+
+@dataclass
+class SleepConfig:
+    enabled: bool = False        # follow the schedule below (/sleep on|off works either way)
+    start: str = "23:00"         # asleep from...
+    end: str = "07:00"           # ...until
+    wake_for_s: float = 120.0    # someone speaking to him wakes him this long
+    idle_max_s: float = 900.0    # asleep, he still takes a routine look this often
+    change_percent: float = 15.0 # ...or when this % of the picture changes (a big change, not a passer-by)
+
+
+@dataclass
 class StartupConfig:
     stagger: bool = True         # start the heavy parts one at a time, waiting for the CPU to calm down, so boot doesn't overload the Pi
     calm_cpu_percent: float = 60.0   # a part starts once the CPU is below this busy for two checks in a row...
@@ -264,6 +289,8 @@ class Config:
     gamepad: GamepadConfig = field(default_factory=GamepadConfig)
     power: PowerConfig = field(default_factory=PowerConfig)
     startup: StartupConfig = field(default_factory=StartupConfig)
+    alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    sleep: SleepConfig = field(default_factory=SleepConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 

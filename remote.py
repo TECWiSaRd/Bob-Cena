@@ -14,6 +14,7 @@ copied somewhere every user can read it (install_remote.sh does that).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import logging
@@ -24,6 +25,7 @@ import stat
 import struct
 import threading
 import time
+from pathlib import Path
 from collections import deque
 from types import SimpleNamespace
 
@@ -59,6 +61,19 @@ def peer_identity(conn) -> tuple[int, str, set[str]] | None:
         except KeyError:
             pass
     return uid, name, groups
+
+
+def my_files_hash() -> str:
+    """Fingerprint of this copy of console.py and remote.py. (Same recipe as version.console_hash: this file is installed
+    for friends on its own, so it can't import version.py.)"""
+    here = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted([here / "console.py", here / "remote.py"], key=lambda p: p.name):
+        try:
+            digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+        except OSError:
+            digest.update(path.name.encode() + b"\0missing\0")
+    return digest.hexdigest()[:8]
 
 
 class Client:
@@ -240,7 +255,7 @@ class RemoteConsole:
                 conn.sendall(encode({"type": "error", "text": "too many people are attached"}))
                 return
             candidate = Client(conn, ident[1], role)
-            candidate.send({"type": "hello", "user": candidate.name, "role": role})
+            candidate.send({"type": "hello", "user": candidate.name, "role": role, "code": my_files_hash()})
             for level, tag, line in self._backlog():
                 candidate.send({"type": "log", "level": level, "tag": tag, "line": line})
             with self._lock:                         # registered last, so live lines can't interleave with the backlog
@@ -480,6 +495,10 @@ class RemoteController:
             self._drive_mode = bool(msg.get("drive_mode"))
         elif kind == "hello":
             self.user, self.role = msg.get("user", "?"), msg.get("role", "?")
+            theirs = msg.get("code")
+            if theirs and theirs != my_files_hash():
+                self.log.lines.append((30, "SYS", "Your bob-console copy differs from Bob's (it may be out of date). "
+                                                  "Ask the owner to run ./install_remote.sh --yes"))
         elif kind in ("notice", "error"):
             self.log.lines.append((30 if kind == "notice" else 40, "SYS", str(msg.get("text", ""))))
             if kind == "error":

@@ -73,7 +73,7 @@ rsync -av --exclude '.venv' --exclude 'logs' --exclude '__pycache__' \
 |---|---|
 | all `.py` files, `install.sh`, `install_music.sh` | `.env` (your API key and passwords) |
 | `config.toml` (your settings) | `tuning.json` (`/trim`, `/minduty`, calibration) |
-| the `manuals/` folder | `memory.json` (Bob's notes), `people.json` |
+| the `manuals/` folder | `memory.json` (Bob's notes), `people.json`, `usage.json` (the all-time cost count) |
 | `wakewords/` (your wake word model) | `logs/`, `captures/`, `voices/`, `models/`, `sounds/`, `.venv/` |
 
 **Your own settings go in `config.local.toml`** (next to `config.toml`). It is read after `config.toml`, wins over it, and
@@ -209,7 +209,7 @@ Bob's notes, the people he knows, your tuning and your passwords exist only on t
 your Mac:
 
 ```bash
-rsync -av adam@bob:~/bob/{memory.json,people.json,tuning.json,.env} ~/Documents/bob-backup/
+rsync -av adam@bob:~/bob/{memory.json,people.json,tuning.json,usage.json,.env} ~/Documents/bob-backup/
 ```
 
 Keep that backup folder private: it contains your API key.

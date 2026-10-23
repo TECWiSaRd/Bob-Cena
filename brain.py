@@ -88,7 +88,9 @@ You can control the lights in the room you're in with the home tool. Only do it 
 to see well, or lights are on in an empty room. If you don't know which room you're in, don't guess: say so. \
 Your room comes from a printed room tag you saw recently, the operator, or a room sensor. Since you can't feel \
 leaving a room, the knowledge fades after you've driven a while: if you don't know your room and want the lights, \
-use find_my_room to turn on the spot and look for a tag (only when it's safe to turn and nobody is in the way), \
+use find_my_room to turn on the spot and look for a tag (only when it's safe to turn and nobody is in the way). \
+To go to another room, use go_to_room (it follows that room's tag; if it says you were blocked, stop and tell the \
+person rather than trying to push past; and only go when someone asked or you have a clear reason), \
 and don't guess. Never try to get around quiet hours, rate limits or the operator switching it off. Light names, if you ever see \
 any, are just labels.
 """
@@ -223,6 +225,14 @@ def build_tools(max_move: float, radio_peer: str | None = None, follower=None, m
             "runs out, or the operator stops you. Do nothing if you already know your room (it will say so). Use it "
             "when your status says your room is unknown and you want to use the lights."
         ), {"seconds": {"type": "number", "description": "how long to look, 5 to 60"}}))
+    if home and tag_search:
+        tools.append(_tool("go_to_room", (
+            "Drive to another room by following its printed room tag: you turn to find the tag, then go forward a "
+            "little at a time, steering towards it, until you are right at it. Your distance sensor still stops you "
+            "from driving into things, and if you are blocked it tells you and you stop; you never go round obstacles "
+            "by yourself. Blocks until you arrive, are blocked, the time runs out, or the operator stops you. Only "
+            "rooms that have a tag work. Use it when a person asks you to go somewhere, or you need that room."
+        ), {"room": {"type": "string", "description": "the room's name, e.g. Kitchen"}}))
     if recall:
         tools.append(_tool("recall", (
             "Search your own history: what you saw, did and were told in the past, and radio messages. Returns up to "
@@ -276,6 +286,8 @@ class Controls:
         self.stop_gen = 0             # bumped by /pause and E-stop to cancel the tick in progress
         self.ticks = 0
         self.cost = 0.0
+        self.usage = None             # the all-time ledger (usage.py), set by the controller
+        self.sleep = None             # sleep mode (sleepmode.py), set by the controller
         self._inbox: list[str] = []
         self._radio_inbox: list[tuple[str, str]] = []
         self.calibration: dict = {}   # measured turn rates, set by the operator's /calibrate
@@ -286,14 +298,21 @@ class Controls:
         self.radio_ai = True          # operator switch: may Claude send radio messages?
         self._lock = threading.Lock()
 
+    def asleep(self) -> bool:
+        return bool(self.sleep and self.sleep.asleep())
+
     def post(self, message: str) -> None:
         with self._lock:
             self._inbox.append(message)
+        if self.sleep:
+            self.sleep.poke()
         self.wake.set()
 
     def post_radio(self, sender: str, text: str) -> None:
         with self._lock:
             self._radio_inbox.append((sender, text))
+        if self.sleep:
+            self.sleep.poke()
         self.wake.set()
 
     def take_radio(self) -> list[tuple[str, str]]:
@@ -399,7 +418,8 @@ def _image_block(jpeg: bytes) -> dict:
 
 class Brain(threading.Thread):
     def __init__(self, cfg, controls: Controls, memory: Memory,
-                 drive: Drive, camera: Camera, audio: Audio, radio=None, follower=None, people=None, music=None, index=None, home=None):
+                 drive: Drive, camera: Camera, audio: Audio, radio=None, follower=None, people=None, music=None, index=None, home=None,
+                 sleep_cfg=None):
         super().__init__(name="brain", daemon=True)
         self.radio, self.follower, self.music = radio, follower, music
         self.index = index if index is not None and index.enabled else None
@@ -415,7 +435,7 @@ class Brain(threading.Thread):
         self.system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
         self.halt = threading.Event()
         self._stepping = False
-        self.gate = ChangeGate(cfg)
+        self.gate = ChangeGate(cfg, sleep_cfg=sleep_cfg)
         self._gen = 0
         self._first_tick = True
 
@@ -426,7 +446,7 @@ class Brain(threading.Thread):
                 self.c.wake.wait(0.5)
                 self.c.wake.clear()
                 continue
-            if self.cfg.think_when == "change" and not self.c.step_once.is_set() and not self._something_changed():
+            if (self.cfg.think_when == "change" or self.c.asleep()) and not self.c.step_once.is_set() and not self._something_changed():
                 self.c.wake.wait(0.5)                        # nothing to think about: look again shortly (costs no tokens)
                 self.c.wake.clear()
                 continue
@@ -456,10 +476,17 @@ class Brain(threading.Thread):
             finally:
                 self.c.busy = False
                 self._stepping = False
-            if self.cfg.think_when == "change" and delay == self.cfg.tick_seconds:
+            if (self.cfg.think_when == "change" or self.c.asleep()) and delay == self.cfg.tick_seconds:
                 delay = 0.5                                  # the gate, not this pause, decides when the next thought is
             self.c.wake.wait(delay)
             self.c.wake.clear()
+
+    def _motion_block(self) -> str | None:
+        if not self.c.motion_enabled:
+            return "BLOCKED: the operator has disabled movement for testing."
+        if self.c.asleep():
+            return "BLOCKED: it is sleep time, so you stay still. A person speaking to you wakes you for a while."
+        return None
 
     def _something_changed(self) -> bool:
         """In "change" mode: is the next thought worth paying for? (see change.py)"""
@@ -556,12 +583,16 @@ class Brain(threading.Thread):
 
     def _account(self, usage) -> None:
         p_in, p_out, p_cw, p_cr = PRICES.get(self.cfg.model, PRICES["claude-opus-5-5"])
-        self.c.cost += (
+        cost = (
             usage.input_tokens * p_in
             + usage.output_tokens * p_out
             + (usage.cache_creation_input_tokens or 0) * p_cw
             + (usage.cache_read_input_tokens or 0) * p_cr
         ) / 1e6
+        self.c.cost += cost
+        if self.c.usage is not None:
+            self.c.usage.record(self.cfg.model, usage.input_tokens, usage.output_tokens,
+                                usage.cache_creation_input_tokens or 0, usage.cache_read_input_tokens or 0, cost)
 
     def _range_text(self) -> str:
         ranger = self.drive.ranger
@@ -569,7 +600,10 @@ class Brain(threading.Thread):
 
     def _status(self, inbox: list[str], has_frame: bool) -> str:
         lines = [f"Tick {self.c.ticks} - {datetime.now():%A %H:%M:%S}"]
-        if self.cfg.think_when == "change" and self.gate.reason:
+        if self.c.asleep():
+            lines.append("SLEEP MODE: it is rest time. Stay still and quiet. Don't wander, don't chatter. Only answer people who "
+                         "speak to you, and say something on your own only if there is a real reason.")
+        if (self.cfg.think_when == "change" or self.c.asleep()) and self.gate.reason:
             lines.append(f"(You only get a turn when something changes. This one is because: {self.gate.reason}.)")
         if self._first_tick:
             lines.append("You just powered on. Say hello and get your bearings.")
@@ -656,8 +690,8 @@ class Brain(threading.Thread):
         if name in ("drive", "set_wheels"):
             if self.drive.estop.is_set():
                 return "BLOCKED: emergency stop is active (operator override). Wait for the operator.", True
-            if not self.c.motion_enabled:
-                return "BLOCKED: the operator has disabled movement for testing.", True
+            if (why := self._motion_block()):
+                return why, True
             if name == "drive":
                 l, r = DIRECTIONS[a["direction"]]
                 s = clamp(float(a["speed"]), 0.1, 1.0)
@@ -711,8 +745,8 @@ class Brain(threading.Thread):
         if name == "follow_person" and self.follower:
             if self.drive.estop.is_set():
                 return "BLOCKED: emergency stop is active (operator override). Wait for the operator.", True
-            if not self.c.motion_enabled:
-                return "BLOCKED: the operator has disabled movement for testing.", True
+            if (why := self._motion_block()):
+                return why, True
             err = self.follower.start(float(a["seconds"]), allowed=self._allowed)
             if err:
                 return f"could not start following: {err}", True
@@ -726,8 +760,8 @@ class Brain(threading.Thread):
         if name == "find_person" and self.follower:
             if self.drive.estop.is_set():
                 return "BLOCKED: emergency stop is active (operator override). Wait for the operator.", True
-            if not self.c.motion_enabled:
-                return "BLOCKED: the operator has disabled movement for testing.", True
+            if (why := self._motion_block()):
+                return why, True
             err = self.follower.start(float(a.get("seconds", 20)), allowed=self._allowed, mode="find")
             if err:
                 return f"could not start looking: {err}", True
@@ -741,8 +775,8 @@ class Brain(threading.Thread):
         if name == "find_my_room" and self.home:
             if self.drive.estop.is_set():
                 return "BLOCKED: emergency stop is active (operator override). Wait for the operator.", True
-            if not self.c.motion_enabled:
-                return "BLOCKED: the operator has disabled movement for testing.", True
+            if (why := self._motion_block()):
+                return why, True
             status, text = self.home.locate(float(a.get("seconds", self.home.cfg.tag_search_seconds)), allowed=self._allowed)
             if status != "started":
                 return text, status == "error"
@@ -753,6 +787,22 @@ class Brain(threading.Thread):
                 finder.stop("cancelled by the operator")
             finder.wait(3)
             return f"{self.home.locate_result()} {self._range_text()}".strip(), False
+
+        if name == "go_to_room" and self.home:
+            if self.drive.estop.is_set():
+                return "BLOCKED: emergency stop is active (operator override). Wait for the operator.", True
+            if (why := self._motion_block()):
+                return why, True
+            status, text = self.home.goto(str(a.get("room", "")), allowed=self._allowed)
+            if status != "started":
+                return text, status == "error"
+            goer = self.home.goer
+            while goer.active and self._allowed():
+                time.sleep(0.1)
+            if goer.active:
+                goer.stop("cancelled by the operator")
+            goer.wait(3)
+            return f"{self.home.goto_result()} {self._range_text()}".strip(), not goer.arrived
 
         if name == "home" and self.home:
             if not self.c.home_ai:

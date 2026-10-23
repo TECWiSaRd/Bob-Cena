@@ -112,6 +112,10 @@ about three-quarters of a word; a camera picture is a few hundred tokens):
 | Sonnet 5.5 | $2 | $10 | about half the price of Opus |
 | Haiku 5.5 | $0.10 | $0.50 | about 1/40th of Opus; good for testing |
 
+**All-time total:** type `/usage` (or `/cost`). Bob adds up every thought's tokens and cost per day and per model in
+`usage.json` on the Pi, so you can see today, the last 7 days, this month and everything since he started counting
+(the report says the start date; anything before that isn't included). It only counts Bob's own calls.
+
 **These are estimates.** Your real spend depends on how often Bob ticks and how much each tick does. The
 status bar shows a running estimate (`$0.412`), and your Anthropic account shows the real bill.
 

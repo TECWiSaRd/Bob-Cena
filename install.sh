@@ -9,7 +9,7 @@ DIR="$(pwd)"
 echo "== System packages"
 sudo apt-get update
 sudo apt-get install -y python3-venv python3-picamera2 python3-gpiozero \
-    python3-opencv v4l-utils espeak-ng alsa-utils tmux
+    python3-opencv v4l-utils espeak-ng alsa-utils tmux openssl avahi-utils git
 # Steady servo pulses: hardware PWM on GPIO12/13 (needs a one-time overlay + reboot).
 # pigpio is only an optional fallback; newer Pi OS releases no longer ship it.
 CONFIG_TXT=/boot/firmware/config.txt

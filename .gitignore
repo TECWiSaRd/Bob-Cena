@@ -3,6 +3,12 @@
 tuning.json
 config.local.toml
 memory.json
+certs/
+devices.json
+devices.json.bad
+.bob-running
+usage.json
+usage.json.bad
 people.json
 music_duck.json
 logs/

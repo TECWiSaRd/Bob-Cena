@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import signal
+import socket
 import sys
 import threading
 import time
@@ -43,6 +44,11 @@ from home import Home
 from power import PowerControl
 from gamepad import Gamepad
 from startup import Stagger
+from usage import UsageLedger
+from update import Updater
+from sleepmode import SleepMode
+from alerts import Alerts, clear_running, mark_running
+from version import console_hash, describe as describe_version
 
 BASE = Path(__file__).resolve().parent
 log = logging.getLogger("bob")
@@ -54,6 +60,13 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   SPACE on empty line   EMERGENCY STOP (also /estop)
   /clear                release the E-stop (AI stays paused)
   /pause (or /hush)     stop Bob thinking now: cancels the request in progress
+  /goto ROOM            drive to a room by following its tag (/goto stop cancels; needs room tags, manual 19)
+  /sleep [on|off|auto]  rest: no wandering, thinks rarely, quiet; speaking to him wakes him for a while
+  /alerts [test]        whether the heartbeat and phone notifications are working (manual 23)
+  /version              which code this is (and whether it is a git checkout)
+  /update               owner only: show what is new on GitHub; /update confirm installs it and restarts Bob
+  /pair                 a one-time code to add a phone or computer to the Bob app; /devices lists and removes them (manual 23)
+  /usage                what Claude has cost, all time (today, 7 days, month, per model)
   /resume               start autonomous AI ticks again (/think on|off also works)
   /model opus|sonnet|haiku   switch Claude model live (haiku is ~40x cheaper than opus)
   /step                 run one AI tick while paused
@@ -164,6 +177,10 @@ class Controller:
         self.calibrating = None   # the Calibrator while a calibration run is in progress
         self.quit = threading.Event()
         self._check_lock = threading.Lock()
+        self.updater = Updater(BASE)
+        self.alerts = Alerts(cfg.alerts, cfg.radio.name, os.environ.get("HEARTBEAT_URL", ""), os.environ.get("NOTIFY_URL", ""), BASE)
+        self._update_pending: dict[str, float] = {}
+        self.restart_requested = False       # set by a confirmed /update: Bob quits and the service starts the new code
         self._staging_halt = threading.Event()      # set at shutdown so parts still waiting their turn never start
         self.stagger = None
         self._drive_mode = False
@@ -175,7 +192,7 @@ class Controller:
         self.drive.on_estop = self.estop
         self.camera = Camera(cfg.camera, sim)
         self.access = AccessPolicy.load(BASE / ".env", os.environ.get("BOB_STREAM_TOKEN", ""))
-        self.stream = StreamServer(cfg.stream, self.camera, self.access) if cfg.stream.enabled else None
+        self.stream = StreamServer(cfg.stream, self.camera, self.access, base=BASE) if cfg.stream.enabled else None
         self.audio = Audio(cfg.audio, BASE / "sounds", sim, BASE / "voices", warm_up=not cfg.startup.stagger)
         self.listener = Listener(cfg.mic, self.heard, self.audio, self.drive)
         self.listener.on_wake = lambda: self.background(self.audio.play, "chirp")
@@ -197,12 +214,15 @@ class Controller:
         self.home.on_event = lambda **kw: self.timeline.record("home", **kw)
         self.drive.on_event = lambda why: self.timeline.record("stop", reason=why)
         self.controls = Controls(cfg.brain.goal, auto=not (paused or cfg.brain.start_paused))
+        self.controls.usage = UsageLedger(BASE / "usage.json")
+        self.sleep = SleepMode(cfg.sleep)
+        self.controls.sleep = self.sleep
         self.controls.calibration = self.calibration
         self.controls.recall_ai = cfg.index.ai
         self.controls.speed_cap = lambda: self.drive.speed_cap
         self.memory = Memory(BASE / "memory.json")
         self.people = People(BASE / "people.json")
-        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home)
+        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home, sleep_cfg=cfg.sleep)
         self.brain.timeline = self.timeline
 
     def _make_radio(self, rc):
@@ -334,6 +354,8 @@ class Controller:
             log.error("Not restarting: Bob wasn't started by the service. Restart him yourself (and reboot the Pi if it repeats)")
             return
         log.error("Restarting Bob now (the service brings him back in a few seconds)")
+        self.alerts.notify("camera", f"The camera driver hung for {seconds:.0f}s, so Bob is restarting himself.", "high", force=True)
+        self.alerts.stop(3)
         try:
             self.drive.close()                    # motor driver in standby before the process goes (only on this path)
         except Exception:
@@ -344,6 +366,83 @@ class Controller:
             except Exception:
                 pass
         exit_fn(75)
+
+    def update_command(self, words: list[str], by: str | None, role: str) -> str | None:
+        """/update shows what is new on GitHub; /update confirm installs it and restarts Bob. Owner only."""
+        if role != "owner":
+            return "only the owner can update Bob"
+        who = by or "the console"
+        if words and words[0] == "cancel":
+            return "cancelled" if self._update_pending.pop(who, None) else "nothing to cancel"
+        if words and words[0] == "confirm":
+            until = self._update_pending.pop(who, None)
+            if until is None or time.monotonic() > until:
+                return "type /update first, then /update confirm within a minute"
+            if not self._check_lock.acquire(blocking=False):
+                return "a check or update is already running"
+
+            def work():
+                try:
+                    ok, text, changed = self.updater.apply()
+                    log.info("UPDATE %s", text) if ok else log.warning("UPDATE failed: %s", text)
+                    self.alerts.notify("update", ("Updated: " if ok and changed else "Update failed: ") + text.splitlines()[0], force=not ok)
+                    if ok and changed:
+                        if os.environ.get("BOB_SUPERVISED") == "1":
+                            log.warning("Restarting Bob to run the new code (the service brings him back in a few seconds)")
+                            self.restart_requested = True
+                            self.quit.set()
+                        else:
+                            log.warning("Updated. Restart Bob yourself to run the new code (/quit, then start him again)")
+                finally:
+                    self._check_lock.release()
+
+            threading.Thread(target=work, name="update", daemon=True).start()
+            return "updating... (the result appears in the log)"
+
+        if not self._check_lock.acquire(blocking=False):
+            return "a check or update is already running"
+
+        def look():
+            try:
+                ok, text, behind = self.updater.status()
+                log.info("UPDATE %s", text) if ok else log.warning("UPDATE: %s", text)
+                if ok and behind:
+                    self._update_pending[who] = time.monotonic() + 60
+            finally:
+                self._check_lock.release()
+
+        threading.Thread(target=look, name="update-look", daemon=True).start()
+        return "looking on GitHub... (the answer appears in the log)"
+
+    def pair_command(self, by: str | None, role: str) -> str:
+        """/pair: a one-time code for adding a phone or computer to the Bob app."""
+        if role not in ("owner", "operator"):
+            return "only the owner or an operator can pair a device"
+        stream = self.stream
+        if stream is None or stream.pairing is None:
+            return ("the app's secure port isn't running (needs [stream] https = true and openssl; see the log for why). "
+                    "Manual 23 has the details")
+        code = stream.pairing.new_code(by or "the console")
+        from appapi import show_code
+        host = socket.gethostname().split(".")[0]
+        port = stream._httpsd.server_address[1]
+        return (f"Pairing code: {show_code(code)}\n  Good for 5 minutes, one device. In the Bob app choose Add Bob and enter it.\n"
+                f"  Bob should appear by himself on this network; if not, enter the address {host}.local:{port}\n"
+                f"  His certificate: {stream.fingerprint[:16]}... (the app checks it)")
+
+    def devices_command(self, words: list[str], role: str) -> str:
+        if role not in ("owner", "operator"):
+            return "only the owner or an operator can manage paired devices"
+        store = self.stream.devices if self.stream else None
+        if store is None:
+            return "the app's secure port isn't running"
+        if words and words[0].lower() == "remove":
+            if len(words) < 2:
+                return "usage: /devices remove NAME"
+            return f"removed {words[1]}: it has to pair again" if store.remove(words[1]) else f"no paired device called {words[1]}"
+        rows = store.describe()
+        return ("Paired devices:\n  " + "\n  ".join(rows) if rows else "No devices are paired. /pair makes a code.") + \
+            "\n  (/devices remove NAME to take one out)"
 
     def check_command(self) -> str | None:
         """/check can take many seconds (network lookups, the camera), so it runs beside the console, never inside it."""
@@ -390,6 +489,7 @@ class Controller:
         if not ok:
             return message
         log.warning("SHUTDOWN: %s is powering the Pi off", who)
+        self.alerts.notify("power", f"{who} is powering the Pi off. Unplug and replug the power to start it again.", force=True)
         self.timeline.record("power", action="shutdown", by=by or "console")
 
         def goodbye():
@@ -460,6 +560,13 @@ class Controller:
             self.audio.play("chirp")
             self.audio.say(f"I'm in the {room}." if room else "I found a room tag.")
         log.info("LOCATE %s", outcome[1] if outcome else "no result")
+
+    def _announce_goto(self, session: int) -> None:
+        goer = self.home.goer
+        outcome = goer.outcome(session, self.cfg.home.goto_seconds + 130)
+        if outcome and outcome[0]:
+            self.audio.play("chirp")
+        log.info("GOTO %s", outcome[1] if outcome else "no result")
 
     def timeline_command(self, words: list[str]) -> str:
         tl = self.timeline
@@ -584,6 +691,7 @@ class Controller:
         self.drive.emergency_stop()  # no new moves while the brain winds down
         if self.brain.is_alive():
             self.brain.join(5)
+        self.controls.usage.flush()           # after the last thought has been counted
         if self.stream:
             self.stream.stop()
         self.drive.close()
@@ -639,6 +747,7 @@ class Controller:
         self.drive_mode = False
         log.warning("EMERGENCY STOP (%s) - motors locked, AI paused. /clear to release.", source)
         self.timeline.record("estop", source=source)
+        self.alerts.notify("estop", f"Emergency stop ({source}). The motors are locked until someone types /clear.", "high")
 
     def status_line(self) -> str:
         c = self.controls
@@ -646,6 +755,8 @@ class Controller:
             mode = "E-STOP"
         elif self.drive_mode:
             mode = "MANUAL DRIVE"
+        elif c.auto and self.sleep.asleep():
+            mode = "SLEEPING"
         else:
             mode = "AUTO" if c.auto else "PAUSED"
         return (
@@ -722,6 +833,26 @@ class Controller:
                 self.follower.stop("paused by the operator")
                 self.drive.stop()
                 return "AI paused; any thought in progress is cancelled"
+            case "pair":
+                return self.pair_command(by, role)
+            case "devices":
+                return self.devices_command(arg.split(None, 1), role)
+            case "sleep":
+                return self.sleep.set(arg) if role != "viewer" else "view-only users can't change sleep mode"
+            case "alerts":
+                if arg.lower() == "test":
+                    if role not in ("owner", "operator"):
+                        return "only the owner or an operator can send a test message"
+                    sent = self.alerts.notify("test", f"Test message from {self.cfg.radio.name}: alerts are working.", force=True)
+                    return "test message queued (it should reach your phone in a few seconds)" if sent else \
+                        "no NOTIFY_URL is set, so there is nowhere to send it (manual 23)"
+                return "alerts: " + self.alerts.describe()
+            case "version":
+                return describe_version(BASE)
+            case "update":
+                return self.update_command(arg.lower().split(), by, role)
+            case "usage" | "cost":
+                return self.controls.usage.report(c.cost)
             case "think":
                 if arg.lower() in ("change", "always"):
                     self.cfg.brain.think_when = "change" if arg.lower() == "change" else "interval"
@@ -898,6 +1029,28 @@ class Controller:
                     self.background(self._announce_locate, self.home.finder.session)
                     return text + " (/locate off to stop; the emergency stop works too)"
                 return text
+            case "goto":
+                word = arg.strip()
+                if word.lower() in ("stop", "off", "cancel"):
+                    if self.home.goer and self.home.goer.active:
+                        self.home.goer.stop()
+                        return "stopping"
+                    return "not going anywhere"
+                if not self.home.enabled:
+                    return "Home Assistant isn't set up ([home] in config.toml), so Bob doesn't use room tags"
+                if not word:
+                    return "usage: /goto ROOM | /goto stop.  Rooms with a tag: " + (", ".join(self.home.destinations()) or "none")
+                if not c.motion_enabled:
+                    return "movement is disabled (/motion on)"
+                if self.sleep.asleep():
+                    return "he is asleep (/sleep off first)"
+                if self.drive.estop.is_set():
+                    return "E-stop active - /clear first"
+                status, text = self.home.goto(word)
+                if status == "started":
+                    self.background(self._announce_goto, self.home.goer.session)
+                    return text + " (/goto stop to cancel; the emergency stop works too)"
+                return text
             case "tags":
                 if not self.home.enabled:
                     return "Home Assistant isn't set up ([home] in config.toml), so Bob doesn't track rooms"
@@ -1051,8 +1204,13 @@ def main() -> None:
     signal.signal(signal.SIGHUP, lambda *_: ctrl.quit.set())
     if ctrl.stream:
         ctrl.stream.attach(ctrl, logbuf)
+    unclean = mark_running(BASE / ".bob-running")
     ctrl.start()
     ctrl.remote.start()
+    ctrl.alerts.start()
+    if unclean:
+        ctrl.alerts.notify("restart", f"{cfg.radio.name} started again after an unexpected stop (a crash, a freeze or a power cut).", "high")
+    ctrl.alerts.notify("start", f"{cfg.radio.name} started ({describe_version(BASE).split(',')[0]}).")
     try:
         if args.headless:
             run_headless(ctrl)
@@ -1064,6 +1222,12 @@ def main() -> None:
     finally:
         ctrl.remote.stop()
         ctrl.shutdown()
+        clear_running(BASE / ".bob-running")      # a clean stop: the next start will not look like a crash
+        ctrl.alerts.notify("stopped", f"{cfg.radio.name} stopped.")
+        ctrl.alerts.stop(3)
+        if ctrl.restart_requested:                # a confirmed /update: exit with a failure code so the service restarts him
+            print("Restarting to run the updated code", file=sys.stderr)
+            sys.exit(75)
         if ctrl.power.requested:                  # a confirmed /shutdown: Bob is stopped cleanly, now power off
             ok, message = ctrl.power.execute()
             log.warning("%s", message)

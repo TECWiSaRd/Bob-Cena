@@ -105,6 +105,8 @@ class Home:
         self.tracker = None                   # TagTracker, when room tags are configured
         self.scanner = None
         self.finder = None                    # TagFinder: turns to look for a tag
+        self.goer = None                      # TagGoer: drives to a room's tag
+        self.paths: dict[str, list[int]] = {}
         self.moved = lambda: 0.0              # the drive's moved_total, set by the controller
         self.wifi_reader = lambda: None       # the current Wi-Fi network name, set by the controller
         self._lock = threading.Lock()
@@ -121,6 +123,10 @@ class Home:
                 if not str(key).isdigit() or not isinstance(room, str):
                     raise ValueError(f"[home] tags: '{key}' should be a tag number, set to a room name")
                 self.tag_rooms[int(key)] = room
+            for room, ids in cfg.paths.items():
+                if (not isinstance(ids, list) or not ids or not all(isinstance(i, int) and i in self.tag_rooms for i in ids)):
+                    raise ValueError(f"[home] paths: '{room}' should be a list of tag numbers that are listed under tags")
+                self.paths[slug(room)] = list(ids)
             if not self.rooms:
                 raise ValueError("[home] rooms is empty: list the Home Assistant areas Bob may control")
             if client is None:
@@ -156,17 +162,20 @@ class Home:
     # ---- where is Bob? ----------------------------------------------------------------------------------
     def attach_camera(self, camera, drive) -> None:
         """Start looking for room tags (if any are configured) using Bob's camera. `drive` supplies how far he has gone."""
-        from tags import TagFinder, TagScanner, TagTracker
+        from tags import TagFinder, TagGoer, TagScanner, TagTracker
         self.moved = drive.moved_total
         if self.enabled and self.cfg.tags and self.scanner is None:
             self.tracker = TagTracker(self.cfg)
             self.scanner = TagScanner(self.cfg, self.tracker, camera, drive.moved_total)
             self.scanner.start()
             self.finder = TagFinder(self.cfg, self.tracker, lambda: self.scanner.detector, camera, drive)
+            self.goer = TagGoer(self.cfg, self.tracker, lambda: self.scanner.detector, camera, drive)
 
     def stop(self) -> None:
         if self.finder and self.finder.active:
             self.finder.stop("shutting down")
+        if self.goer and self.goer.active:
+            self.goer.stop("shutting down")
         if self.scanner:
             self.scanner.stop()
 
@@ -185,6 +194,35 @@ class Home:
         if self.on_event:
             self.on_event(action="locate", note="started")
         return "started", "turning on the spot to look for a room tag"
+
+    def destinations(self) -> list[str]:
+        return sorted(set(self.tag_rooms.values())) if self.enabled else []
+
+    def goto(self, room_text: str, seconds: float | None = None, allowed=lambda: True) -> tuple[str, str]:
+        """Drive to a room's tag. Returns (status, message): 'started', 'known' (already there) or 'error'."""
+        if not self.enabled or self.goer is None:
+            return "error", "room tags aren't set up: add them under [home] tags in config.toml (manual 19)"
+        if not self.active():
+            return "error", "there are no room tags to follow at this house"
+        key = slug(room_text)
+        room = next((r for r in self.destinations() if slug(r) == key), None)
+        if room is None:
+            return "error", f"I don't know a room called '{room_text}'. Rooms with a tag: {', '.join(self.destinations()) or 'none'}"
+        here, _ = self.where()
+        if here and slug(here) == key:
+            return "known", f"You are already in the {room}."
+        hops = self.paths.get(key) or sorted(i for i, r in self.tag_rooms.items() if slug(r) == key)[:1]
+        err = self.goer.start(room, hops, seconds if seconds is not None else self.cfg.goto_seconds, allowed)
+        if err:
+            return "error", f"can't go to the {room}: {err}"
+        if self.on_event:
+            self.on_event(action="goto", note=f"started: {room}")
+        return "started", f"heading for the {room}"
+
+    def goto_result(self) -> str:
+        room, _ = self.where()
+        text = self.goer.result if self.goer else ""
+        return f"{text}. " + (f"Now you are in the {room}." if room else "Your room is still unknown.")
 
     def locate_result(self) -> str:
         room, why = self.where()

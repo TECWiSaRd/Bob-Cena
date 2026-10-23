@@ -106,6 +106,7 @@ Commands start with `/`. Type `/help` in the console for a short list.
 
 | Command | What it does |
 |---|---|
+| `/usage` (or `/cost`) | what Claude has cost, **all time**: today, the last 7 days, this month, all time, and per model, plus the cost of this run. Counted from Bob's own calls and kept in `usage.json` on the Pi, so it survives restarts. An estimate; your real bill is on your Anthropic account page |
 | `/check` | one report on whether he's ready: motors, camera (takes a picture), speaker, microphone, distance sensor, stream, Claude key, music, radio, **temperature, power supply, disk space, memory and Wi-Fi**. Each line is `ok`, `WARN`, `FAIL` or `off`. It moves nothing and costs nothing. It runs in the background and the report appears in the log after up to 20 seconds, so the console stays usable |
 | `/timeline` | the event record (below). `/timeline on`, `off`, `show 20`, `clear` |
 | `/access` | the Wi-Fi network Bob is on and which dashboard tokens work on it right now (never shows a token). See [Camera, stream and dashboard](07-camera-stream-and-dashboard.md) |

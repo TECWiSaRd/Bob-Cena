@@ -56,6 +56,9 @@ host = "0.0.0.0"           # "127.0.0.1" = only reachable through an SSH tunnel
 port = 8080
 fps = 10.0
 dashboard = true           # control page at http://<pi>:8080/dash?token=...  (needs BOB_STREAM_TOKEN, 8+ characters)
+https = true               # the Bob app's secure port (own certificate, made on first start; pair a device with /pair). Needs openssl
+https_port = 8443
+bonjour = true             # announce Bob on the local network so the app finds him (needs avahi-utils on the Pi)
 
 [audio]
 tts = "piper"              # natural voice, offline. Falls back to espeak-ng if Piper isn't installed
@@ -136,6 +139,10 @@ tags = {}                  # for example { 1 = "Kitchen", 2 = "Living Room" }
 tag_min_px = 40.0          # a tag must look this wide (pixels) to be believed, so he has to be close
 tag_valid_s = 300.0
 tag_search_speed = 0.35    # /locate: how fast he turns on the spot looking for a tag
+tag_arrive_px = 180.0       # /goto: he has arrived when the tag looks this wide in the picture
+goto_speed = 0.35
+goto_seconds = 90.0
+paths = {}                 # optional routes, room -> tags in order, e.g. { Kitchen = [5, 1] } (manual 24)
 tag_search_seconds = 25.0  # ...and how long he looks
 tag_max_move_s = 20.0      # the room is forgotten once the wheels have run this long since the last tag
 
@@ -166,6 +173,20 @@ btn_resume = 3
 btn_slow = 4
 btn_back = 6
 btn_drive = 7
+
+[alerts]
+enabled = false            # tell you when something is wrong; needs HEARTBEAT_URL and/or NOTIFY_URL in .env (manual 23)
+heartbeat_every_s = 60.0
+cooldown_s = 300.0         # least time between two notifications of the same kind
+notify = ["restart", "estop", "camera", "power", "update", "vitals"]   # also: "start", "stopped"
+
+[sleep]
+enabled = false            # follow the schedule below (/sleep on|off works either way; manual 24)
+start = "23:00"
+end = "07:00"
+wake_for_s = 120.0         # someone speaking to him wakes him this long
+idle_max_s = 900.0         # asleep, he still takes a routine look this often
+change_percent = 15.0      # ...or when this % of the picture changes
 
 [startup]
 stagger = true             # start the heavy parts one at a time, waiting for the CPU to calm down, so boot can't overload the Pi

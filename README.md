@@ -417,6 +417,12 @@ through a small SQLite index in `logs/index.db`, for example `/search kind:estop
 only new records, follows deletions (`/timeline clear` removes the matching rows), and can be rebuilt any
 time with `/index rebuild`. With `/index ai on`, Claude can search his own past too (off by default).
 
+## The Bob app (Mac and Android)
+
+`app/` is a Flutter app: live camera, a thumb-stick, chat, status and cost, sleep, go-to-room. It connects over HTTPS with a certificate
+Bob makes himself; you pair a device once with `/pair` (a one-time code that is never sent over the network) and the app then trusts only
+Bob's own certificate. Bob announces himself with Bonjour so the app finds him. See `manuals/25-the-bob-app.md`.
+
 ## Xbox controller
 
 Set `[gamepad] enabled = true` (in `config.local.toml`), plug the controller in or pair it over Bluetooth, and restart

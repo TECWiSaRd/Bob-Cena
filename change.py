@@ -38,37 +38,41 @@ def changed_percent(a, b) -> float:
 
 
 class ChangeGate:
-    def __init__(self, cfg, clock=time.monotonic):
-        self.cfg, self._clock = cfg, clock
+    def __init__(self, cfg, clock=time.monotonic, sleep_cfg=None):
+        self.cfg, self._clock, self.sleep_cfg = cfg, clock, sleep_cfg
         self.last = None               # when Bob last thought
         self._pic = None               # the picture at that time
         self._dist = None
         self.reason = ""               # why the latest "yes" was given
         self.skipped = 0               # how many looks said "no" (a rough measure of what was saved)
 
-    def check(self, picture, dist_cm, has_mail: bool, force: bool = False) -> bool:
+    def check(self, picture, dist_cm, has_mail: bool, force: bool = False, sleeping: bool = False) -> bool:
         now = self._clock()
-        why = self._why(now, picture, dist_cm, has_mail, force)
+        why = self._why(now, picture, dist_cm, has_mail, force, sleeping and self.sleep_cfg)
         if why is None:
             self.skipped += 1
             return False
         self.reason, self.last, self._pic, self._dist = why, now, picture, dist_cm
         return True
 
-    def _why(self, now, picture, dist_cm, has_mail, force):
+    def _why(self, now, picture, dist_cm, has_mail, force, rest=None):
+        # asleep, the same rules apply but the thresholds are much higher (a big change, or a routine look every so often)
+        change_percent = rest.change_percent if rest else self.cfg.change_percent
+        idle_max = rest.idle_max_s if rest else self.cfg.idle_max_s
+        min_gap = max(self.cfg.tick_seconds, 10.0) if rest else self.cfg.tick_seconds
         if force:
             return "the operator asked for a step"
         if self.last is None:
             return "first look"
         if has_mail:
             return "someone sent you a message"
-        if now - self.last < self.cfg.tick_seconds:
+        if now - self.last < min_gap:
             return None
         pct = changed_percent(self._pic, picture) if picture is not None else 0.0
-        if picture is not None and pct >= self.cfg.change_percent:
+        if picture is not None and pct >= change_percent:
             return f"the picture changed ({pct:.0f}% of it)"
         if dist_cm is not None and self._dist is not None and abs(dist_cm - self._dist) >= self.cfg.change_distance_cm:
             return f"the distance reading moved ({self._dist:.0f} to {dist_cm:.0f} cm)"
-        if now - self.last >= self.cfg.idle_max_s:
-            return f"nothing happened for {self.cfg.idle_max_s:.0f}s (routine look)"
+        if now - self.last >= idle_max:
+            return f"nothing happened for {idle_max:.0f}s (routine look)"
         return None
