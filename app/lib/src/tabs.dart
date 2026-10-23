@@ -1,0 +1,389 @@
+import 'dart:async';
+import 'dart:io' show Platform;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+
+import 'app_state.dart';
+import 'widgets.dart';
+
+const _bottomRoom = 96.0; // keeps content clear of the emergency stop button
+
+Future<void> runCommand(BuildContext context, String text, {bool dialogIfLong = true}) async {
+  final s = context.read<AppState>();
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final out = (await s.send(text)).trim();
+    if (out.isEmpty || !context.mounted) return;
+    if (dialogIfLong && (out.length > 90 || out.contains('\n'))) {
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: Text(text.split(' ').first),
+          content: SingleChildScrollView(child: SelectableText(out, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+          actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('OK'))],
+        ),
+      );
+    } else {
+      messenger.showSnackBar(SnackBar(content: Text(out)));
+    }
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text(e.toString())));
+  }
+}
+
+// =====================================================================================================================
+class DriveTab extends StatefulWidget {
+  const DriveTab({super.key});
+
+  @override
+  State<DriveTab> createState() => _DriveTabState();
+}
+
+class _DriveTabState extends State<DriveTab> {
+  double _x = 0, _y = 0;
+  bool _slow = false;
+  Timer? _timer;
+  final Set<LogicalKeyboardKey> _keys = {};
+  final _focus = FocusNode();
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _setStick(double x, double y) {
+    _x = x;
+    _y = y;
+    _drive();
+  }
+
+  void _drive() {
+    final s = context.read<AppState>();
+    final (l, r) = mixWheels(_x, _y, scale: _slow ? 0.5 : 1.0);
+    if (l == 0 && r == 0) {
+      _timer?.cancel();
+      _timer = null;
+      s.drive(0, 0);
+      return;
+    }
+    s.drive(l, r);
+    _timer ??= Timer.periodic(const Duration(milliseconds: 250), (_) {
+      final (l2, r2) = mixWheels(_x, _y, scale: _slow ? 0.5 : 1.0);
+      s.drive(l2, r2);
+    });
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is KeyRepeatEvent) return KeyEventResult.handled;
+    final k = event.logicalKey;
+    if (event is KeyDownEvent && k == LogicalKeyboardKey.space) {
+      final s = context.read<AppState>();
+      s.drive(0, 0);
+      unawaited(s.send('/estop'));
+      return KeyEventResult.handled;
+    }
+    final driving = <LogicalKeyboardKey>{
+      LogicalKeyboardKey.keyW, LogicalKeyboardKey.arrowUp, LogicalKeyboardKey.keyS, LogicalKeyboardKey.arrowDown,
+      LogicalKeyboardKey.keyA, LogicalKeyboardKey.arrowLeft, LogicalKeyboardKey.keyD, LogicalKeyboardKey.arrowRight,
+    };
+    if (!driving.contains(k)) return KeyEventResult.ignored;
+    if (event is KeyDownEvent) {
+      _keys.add(k);
+    } else if (event is KeyUpEvent) {
+      _keys.remove(k);
+    }
+    final up = _keys.contains(LogicalKeyboardKey.keyW) || _keys.contains(LogicalKeyboardKey.arrowUp);
+    final down = _keys.contains(LogicalKeyboardKey.keyS) || _keys.contains(LogicalKeyboardKey.arrowDown);
+    final left = _keys.contains(LogicalKeyboardKey.keyA) || _keys.contains(LogicalKeyboardKey.arrowLeft);
+    final right = _keys.contains(LogicalKeyboardKey.keyD) || _keys.contains(LogicalKeyboardKey.arrowRight);
+    _setStick((right ? 1.0 : 0.0) - (left ? 1.0 : 0.0), (up ? 1.0 : 0.0) - (down ? 1.0 : 0.0));
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.watch<AppState>();
+    final client = s.client;
+    final desktop = Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+    return Focus(
+      focusNode: _focus,
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom), children: [
+        if (client != null) MjpegView(key: ValueKey(client), client: client),
+        const SizedBox(height: 12),
+        Center(child: Joystick(onChanged: _setStick)),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Text('Slow'),
+          Switch(value: _slow, onChanged: (v) => setState(() => _slow = v)),
+        ]),
+        Center(
+          child: Text(
+            desktop ? 'Drag the stick, or use W A S D / arrow keys. Space is the emergency stop.' : 'Drag the stick to drive. He stops when you let go.',
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, runSpacing: 8, alignment: WrapAlignment.center, children: [
+          FilledButton.tonal(onPressed: () => runCommand(context, '/pause'), child: const Text('Pause AI')),
+          FilledButton.tonal(onPressed: () => runCommand(context, '/resume'), child: const Text('Resume AI')),
+          FilledButton.tonal(onPressed: () => runCommand(context, '/follow 30'), child: const Text('Follow me')),
+          FilledButton.tonal(onPressed: () => runCommand(context, '/follow off'), child: const Text('Stop following')),
+        ]),
+      ]),
+    );
+  }
+}
+
+// =====================================================================================================================
+class StatusTab extends StatelessWidget {
+  const StatusTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final st = context.watch<AppState>().status;
+    if (st.isEmpty) return const Center(child: Text('No status yet'));
+    final usage = (st['usage'] as Map?) ?? const {};
+    final vitals = (st['vitals'] as Map?) ?? const {};
+    final events = ((st['events'] as List?) ?? const []).cast<Map>();
+    final throttled = (vitals['throttled'] as int?) ?? 0;
+    final scheme = Theme.of(context).colorScheme;
+    String money(Object? v) => v is num ? '\$${v.toStringAsFixed(2)}' : '-';
+
+    Widget card(String title, List<Widget> children) => Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              ...children,
+            ]),
+          ),
+        );
+
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom), children: [
+      card('Bob', [
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          StatChip('AI ${st['thinking'] == true ? 'thinking' : 'idle'}'),
+          StatChip('camera ${st['camera']}', color: st['camera'] == 'OFF' ? scheme.tertiary : null),
+          StatChip('mic ${st['mic']}'),
+          StatChip(st['muted'] == true ? 'audio MUTED' : 'audio on'),
+          StatChip('speed cap ${st['cap']}'),
+          if (st['sleep'] == true) StatChip('sleeping', color: Colors.indigo),
+          if (st['follow'] == true) const StatChip('following', color: Colors.green),
+          if ((st['radio'] ?? '').toString().isNotEmpty) StatChip('radio ${st['radio']}'),
+          if (st['dist'] != null) StatChip('${st['dist']} cm ahead', color: (st['dist'] as num) < 20 ? scheme.error : null),
+          if (st['room'] != null) StatChip('in the ${st['room']}'),
+          StatChip('${st['model']} / ${st['effort']}'),
+        ]),
+      ]),
+      card('What Claude has cost', [
+        Text('This run: ${money(st['cost'])}'),
+        Text('Today: ${money(usage['today'])}'),
+        Text('All time: ${money(usage['all'])}${usage['since'] != null ? '  (since ${usage['since']})' : ''}'),
+        const SizedBox(height: 4),
+        Text('An estimate from Bob\'s own calls.', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+      ]),
+      card('The Pi', [
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          if (vitals['temp_c'] != null)
+            StatChip('${(vitals['temp_c'] as num).round()} °C', color: (vitals['temp_c'] as num) >= 80 ? scheme.error : (vitals['temp_c'] as num) >= 70 ? scheme.tertiary : null),
+          if (vitals['load'] != null) StatChip('load ${(vitals['load'] as num).toStringAsFixed(1)}'),
+          if (vitals['mem_mb'] != null) StatChip('${vitals['mem_mb']} MB free'),
+          if (vitals['disk_gb'] != null) StatChip('${(vitals['disk_gb'] as num).toStringAsFixed(1)} GB disk'),
+          if (throttled & 5 != 0) StatChip('power or heat limit', color: scheme.error),
+          if (vitals.isEmpty) const Text('No readings'),
+        ]),
+        const SizedBox(height: 8),
+        Text('Bob ${st['version']}', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+      ]),
+      if (events.isNotEmpty)
+        card('Recent events', [
+          for (final e in events.reversed)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Text('${(e['t'] ?? '').toString().padRight(19).substring(11, 19)}  ${e['kind']}  ${e['text']}',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+            ),
+        ]),
+    ]);
+  }
+}
+
+// =====================================================================================================================
+class ChatTab extends StatefulWidget {
+  const ChatTab({super.key});
+
+  @override
+  State<ChatTab> createState() => _ChatTabState();
+}
+
+class _ChatTabState extends State<ChatTab> {
+  final _text = TextEditingController();
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _text.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final v = _text.text.trim();
+    if (v.isEmpty) return;
+    _text.clear();
+    await runCommand(context, v.startsWith('/') ? v : '/ask $v');
+  }
+
+  Color _color(BuildContext context, String level, String tag) {
+    final scheme = Theme.of(context).colorScheme;
+    if (level == 'ERROR') return scheme.error;
+    if (level == 'WARNING') return scheme.tertiary;
+    if (tag == 'BOB' || tag == 'SAY') return scheme.primary;
+    if (tag == 'HEARD' || tag == 'YOU') return Colors.purple;
+    if (tag == 'RADIO') return Colors.green;
+    return scheme.onSurface;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = ((context.watch<AppState>().status['log'] as List?) ?? const []).cast<Map>();
+    return Column(children: [
+      Expanded(
+        child: ListView.builder(
+          controller: _scroll,
+          reverse: true,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          itemCount: lines.length,
+          itemBuilder: (c, i) {
+            final row = lines[lines.length - 1 - i];
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 1),
+              child: Text(row['m'].toString(),
+                  style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: _color(c, '${row['l']}', '${row['t']}'))),
+            );
+          },
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, _bottomRoom),
+        child: Row(children: [
+          Expanded(
+            child: TextField(
+              controller: _text,
+              onSubmitted: (_) => _send(),
+              decoration: const InputDecoration(hintText: 'Say something to Bob, or a /command', border: OutlineInputBorder(), isDense: true),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton.filled(onPressed: _send, icon: const Icon(Icons.send)),
+        ]),
+      ),
+    ]);
+  }
+}
+
+// =====================================================================================================================
+class MoreTab extends StatefulWidget {
+  const MoreTab({super.key});
+
+  @override
+  State<MoreTab> createState() => _MoreTabState();
+}
+
+class _MoreTabState extends State<MoreTab> {
+  String? _room;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.watch<AppState>();
+    final rooms = s.rooms;
+    final room = rooms.contains(_room) ? _room : (rooms.isEmpty ? null : rooms.first);
+    Widget cmd(String label, String text, {IconData? icon}) =>
+        FilledButton.tonalIcon(onPressed: () => runCommand(context, text), icon: Icon(icon ?? Icons.bolt), label: Text(label));
+
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom), children: [
+      Text('Controls', style: Theme.of(context).textTheme.titleSmall),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        cmd('Sleep', '/sleep on', icon: Icons.bedtime),
+        cmd('Wake up', '/sleep off', icon: Icons.wb_sunny),
+        cmd('Mute', '/mute', icon: Icons.volume_off),
+        cmd('Unmute', '/unmute', icon: Icons.volume_up),
+        cmd('Camera on', '/camera on', icon: Icons.videocam),
+        cmd('Camera off', '/camera off', icon: Icons.videocam_off),
+        cmd('Release e-stop', '/clear', icon: Icons.lock_open),
+        cmd('Check everything', '/check', icon: Icons.health_and_safety),
+        cmd('Cost', '/usage', icon: Icons.attach_money),
+      ]),
+      if (rooms.isNotEmpty) ...[
+        const SizedBox(height: 20),
+        Text('Go to a room', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              initialValue: room,
+              items: [for (final r in rooms) DropdownMenuItem(value: r, child: Text(r))],
+              onChanged: (v) => setState(() => _room = v),
+              decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(onPressed: room == null ? null : () => runCommand(context, '/goto $room'), child: const Text('Go')),
+          const SizedBox(width: 8),
+          OutlinedButton(onPressed: () => runCommand(context, '/goto stop'), child: const Text('Stop')),
+        ]),
+        const SizedBox(height: 4),
+        Text('He follows the room\'s tag, slowly, and stops if anything is in the way.',
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      ],
+      if (s.hasMusic) ...[
+        const SizedBox(height: 20),
+        Text('Music  ${s.status['music'] ?? ''}', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Wrap(spacing: 8, children: [
+          IconButton.filledTonal(onPressed: () => runCommand(context, '/music prev'), icon: const Icon(Icons.skip_previous)),
+          IconButton.filledTonal(onPressed: () => runCommand(context, '/music play'), icon: const Icon(Icons.play_arrow)),
+          IconButton.filledTonal(onPressed: () => runCommand(context, '/music pause'), icon: const Icon(Icons.pause)),
+          IconButton.filledTonal(onPressed: () => runCommand(context, '/music next'), icon: const Icon(Icons.skip_next)),
+          IconButton.filledTonal(onPressed: () => runCommand(context, '/music vol down'), icon: const Icon(Icons.volume_down)),
+          IconButton.filledTonal(onPressed: () => runCommand(context, '/music vol up'), icon: const Icon(Icons.volume_up)),
+        ]),
+      ],
+      const SizedBox(height: 24),
+      Text('This device', style: Theme.of(context).textTheme.titleSmall),
+      const SizedBox(height: 8),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text('Paired with ${s.robotName}'),
+        subtitle: Text('${s.profile?.host}:${s.profile?.port}\nas "${s.profile?.device}"\ncertificate ${s.profile?.fingerprint.substring(0, 16)}...'),
+        isThreeLine: true,
+      ),
+      OutlinedButton.icon(
+        onPressed: () async {
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (c) => AlertDialog(
+              title: const Text('Unpair this device?'),
+              content: Text('${s.robotName} will forget this device and you will need a new code to add it again.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+                FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Unpair')),
+              ],
+            ),
+          );
+          if (ok == true) await s.forget();
+        },
+        icon: const Icon(Icons.link_off),
+        label: const Text('Unpair this device'),
+      ),
+    ]);
+  }
+}
