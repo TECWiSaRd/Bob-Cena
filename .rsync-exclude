@@ -1,0 +1,30 @@
+# What ./deploy.sh does NOT copy from the Mac to the Pi.
+
+# development files the Pi never uses (the app alone can be a gigabyte of build output)
+/.git
+/.github
+/app
+.DS_Store
+__pycache__
+*.pyc
+/.venv
+/.idea
+/.vscode
+
+# things that exist only on the Pi (its own data and secrets); never overwrite them
+/.env
+/memory.json
+/people.json
+/tuning.json
+/usage.json
+/devices.json
+/certs
+/.bob-running
+/logs
+/captures
+/voices
+/wakeword_clips
+
+# made on the Mac for printing, or made again by the Pi
+/tags
+/sounds

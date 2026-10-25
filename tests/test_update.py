@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -212,10 +213,49 @@ class SetupScriptTests(unittest.TestCase):
             copy.mkdir()
             (copy / "setup_updates.sh").write_text(self.script.read_text())
             git(copy, "init", "-q")
-            git(copy, "remote", "add", "origin", "git@example:me/bob.git")
+            git(copy, "remote", "add", "origin", "git@github-bob:me/bob.git")
             done = subprocess.run(["bash", str(copy / "setup_updates.sh")], capture_output=True, text=True, timeout=20)
             self.assertEqual(done.returncode, 0)
-            self.assertIn("already a git checkout", done.stdout)
+            self.assertIn("already set up for updates", done.stdout)
+
+    def test_a_git_folder_copied_from_the_mac_is_recognised_and_set_aside(self):
+        with tempfile.TemporaryDirectory() as d:
+            copy = Path(d) / "bob"
+            copy.mkdir()
+            (copy / "setup_updates.sh").write_text(self.script.read_text())
+            git(copy, "init", "-q")
+            git(copy, "remote", "add", "origin", "https://github.com/me/bob.git")      # what rsync copies from the Mac
+            done = subprocess.run(["bash", str(copy / "setup_updates.sh")], input="n\n", capture_output=True, text=True, timeout=20)
+            self.assertIn("copied over from the Mac", done.stdout)
+            self.assertEqual(done.returncode, 1)                                         # it stops at the question (we said no)
+            self.assertTrue((copy / ".git").exists())                                    # and changed nothing yet
+
+
+class DeployTests(unittest.TestCase):
+    """deploy.sh copies with rsync using .rsync-exclude: check, with a real local rsync, what would and would not be sent."""
+    root = Path(__file__).resolve().parent.parent
+
+    @unittest.skipUnless(shutil.which("rsync"), "rsync isn't installed")
+    def test_the_app_the_git_history_and_the_pis_own_files_are_not_copied(self):
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = Path(d) / "src", Path(d) / "dst"
+            for rel in ("bob.py", "tags.py", "certs.py", "config.local.toml", "manuals/01.md", "tests/test_x.py", "tests/app_test_server.py",
+                        "app/lib/main.dart", "app/build/big.bin", ".git/HEAD", ".github/workflows/x.yml", ".env", "memory.json", "tuning.json",
+                        "usage.json", "devices.json", "certs/bob-key.pem", "logs/bob.log", "tags/tag-1.png", "sounds/beep.wav",
+                        "__pycache__/x.pyc", ".DS_Store", "wakewords/hey_bob.onnx", "bob.service"):
+                path = src / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("x")
+            subprocess.run(["rsync", "-a", f"--exclude-from={self.root / '.rsync-exclude'}", f"{src}/", f"{dst}/"], check=True)
+            sent = {str(p.relative_to(dst)) for p in dst.rglob("*") if p.is_file()}
+            self.assertEqual(sent, {"bob.py", "tags.py", "certs.py", "config.local.toml", "manuals/01.md", "tests/test_x.py",
+                                    "tests/app_test_server.py", "wakewords/hey_bob.onnx", "bob.service"})
+
+    def test_the_script_is_valid_shell_with_help_and_refuses_odd_options(self):
+        script = self.root / "deploy.sh"
+        subprocess.run(["bash", "-n", str(script)], check=True)
+        self.assertIn("--dry-run", subprocess.run(["bash", str(script), "--help"], capture_output=True, text=True).stdout)
+        self.assertEqual(subprocess.run(["bash", str(script), "--nonsense"], capture_output=True, text=True).returncode, 2)
 
 
 if __name__ == "__main__":

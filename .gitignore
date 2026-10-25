@@ -26,3 +26,6 @@ __pycache__/
 wakewords/hey_bob_old.onnx
 sounds/
 tags/
+
+# scratch space for logos, design references and other working files
+temp/

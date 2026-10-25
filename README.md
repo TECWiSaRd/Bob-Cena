@@ -122,8 +122,8 @@ files that changed. Replace `adam` and the IP with your Pi's username and
 address.
 
 ```bash
-rsync -av --exclude '.venv' --exclude 'logs' --exclude '__pycache__' \
-  ~/Documents/"Bob Cena"/ adam@192.168.x.x:~/bob/
+cd ~/Documents/"Bob Cena"
+./deploy.sh adam@192.168.x.x      # leaves out app/, .git and the Pi's own data (see .rsync-exclude); --dry-run shows what it would copy
 ```
 
 The first copy works the same way. Then restart Bob so it picks up the new

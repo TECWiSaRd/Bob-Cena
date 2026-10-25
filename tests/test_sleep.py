@@ -98,7 +98,50 @@ class ThroughTheRobot(unittest.TestCase):
         srv.attach(self.ctrl, None)
         self.ctrl.handle("/sleep on")
         self.assertEqual(srv.status()["mode"], "SLEEPING")
+        st = srv.status()
+        self.assertIs(st["auto"], True)            # the app's AI switch shows this
+        self.assertIs(st["going"], False)          # ...and its Go / Stop button this
+        self.ctrl.handle("/pause")
+        self.assertIs(srv.status()["auto"], False)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhoIsOnTests(unittest.TestCase):
+    """The "who's on" card in the app."""
+
+    def setUp(self):
+        import bob
+        import stream
+        import time
+        os.environ["ANTHROPIC_API_KEY"] = "dummy"
+        cfg = config.Config()
+        cfg.stream.enabled = False
+        self.ctrl = bob.Controller(cfg, sim=True, paused=True)
+        self.addCleanup(self.ctrl.shutdown)
+        self.srv = stream.StreamServer(config.StreamConfig(), self.ctrl.camera, self.ctrl.access)
+        self.srv.attach(self.ctrl, None)
+        self.time = time
+
+    def test_nobody_by_default(self):
+        self.assertEqual(self.srv.status()["operators"], [])
+
+    def test_people_on_the_shared_console_app_devices_and_dashboard_users(self):
+        self.ctrl.remote = type("R", (), {"attached": lambda self: [{"name": "kai", "role": "operator"}, {"name": "sam", "role": "viewer"}]})()
+        ident, _ = self.srv.devices.add("Adam's Mac", "adam")
+        self.srv.devices.devices[ident]["last_seen"] = self.time.time() - 30
+        old, _ = self.srv.devices.add("Old phone", "adam")
+        self.srv.devices.devices[old]["last_seen"] = self.time.time() - 3600           # not on any more
+        self.srv.note_user("rylan")
+        who = {(o["name"], o["via"]) for o in self.srv.status()["operators"]}
+        self.assertEqual(who, {("kai", "console"), ("sam", "console (watching)"), ("Adam's Mac", "app"), ("rylan", "dashboard")})
+
+    def test_a_person_in_two_places_is_listed_once_and_no_secrets_appear(self):
+        ident, token = self.srv.devices.add("kai", "adam")
+        self.srv.devices.devices[ident]["last_seen"] = self.time.time()
+        self.ctrl.remote = type("R", (), {"attached": lambda self: [{"name": "kai", "role": "operator"}]})()
+        status = self.srv.status()
+        self.assertEqual(len([o for o in status["operators"] if o["name"] == "kai"]), 1)
+        self.assertNotIn(token, str(status))

@@ -212,6 +212,11 @@ class RemoteConsole:
             who = [f"{c.name} ({c.role})" for c in self.clients]
         return f"on {self.cfg.socket}; " + (", ".join(who) if who else "nobody attached")
 
+    def attached(self) -> list[dict]:
+        """Who is attached to the shared console right now, for the app's "who's on" card."""
+        with self._lock:
+            return [{"name": c.name, "role": c.role} for c in self.clients]
+
     def drivers(self) -> list[str]:
         """Names of the attached people who may drive (not watch-only viewers)."""
         with self._lock:

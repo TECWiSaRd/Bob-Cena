@@ -27,10 +27,17 @@ HOSTALIAS="github-bob"
 command -v git >/dev/null || { echo "git isn't installed: sudo apt-get install -y git"; exit 1; }
 
 if [ -d "$HERE/.git" ]; then
-    echo "This folder is already a git checkout:"
-    git -C "$HERE" remote -v | head -2
-    echo "Nothing to do. Try /update in Bob's console."
-    exit 0
+    CURRENT="$(git -C "$HERE" remote get-url origin 2>/dev/null || true)"
+    case "$CURRENT" in
+        git@"$HOSTALIAS":*)
+            echo "This folder is already set up for updates:"
+            git -C "$HERE" remote -v | head -2
+            echo "Nothing to do. Try /update in Bob's console."
+            exit 0 ;;
+        *)
+            echo "This folder has a .git folder, but not one made for this Pi (origin: ${CURRENT:-none})."
+            echo "It was probably copied over from the Mac with rsync. It will be set aside as .git-from-mac and replaced." ;;
+    esac
 fi
 
 echo "This will:"
@@ -74,6 +81,10 @@ tar -czf "$BACKUP" -C "$(dirname "$HERE")" --exclude='.venv' "$(basename "$HERE"
 echo "Backed up to $BACKUP"
 
 cd "$HERE"
+if [ -d .git ]; then
+    rm -rf .git-from-mac
+    mv .git .git-from-mac
+fi
 git init -q -b main
 git remote add origin "git@$HOSTALIAS:$REPO.git"
 git fetch -q origin main

@@ -4,7 +4,7 @@
 #   Or:  Actions tab -> "Build the Bob app" -> Run workflow  ->  download them from the run's page ("Artifacts").
 #
 # Nothing here uses a secret other than GitHub's own token. The apps are not signed with an Apple or Google developer
-# identity: see manuals/25-the-bob-app.md for what your friends do the first time they open them.
+# identity: see manuals/25-the-bob-app.md for what your friends do the first time they open them (on a Mac: System Settings, Privacy & Security, Open Anyway).
 name: Build the Bob app
 
 on:

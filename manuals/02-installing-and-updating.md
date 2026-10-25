@@ -60,12 +60,15 @@ sudo nmcli connection modify "$(nmcli -t -f NAME connection show --active | head
 Run this **on your Mac** whenever anything changes. It only sends files that changed:
 
 ```bash
-rsync -av --exclude '.venv' --exclude 'logs' --exclude '__pycache__' \
-  ~/Documents/"Bob Cena"/ adam@bob:~/bob/
+cd ~/Documents/"Bob Cena"
+./deploy.sh                    # to adam@bob; or  ./deploy.sh kai@192.168.1.20
+./deploy.sh --dry-run          # only shows what it would copy
 ```
 
-- The `/` after `"Bob Cena"` matters: it copies the folder's *contents* into `~/bob`.
+- It copies the code, the manuals and your `config.toml` / `config.local.toml`. It leaves out the **`app/` folder** (a gigabyte of build files the Pi
+  never uses), the **git history**, and the Pi's own data and secrets (`.env`, notes, tuning, certificates, paired devices, logs). The list is in `.rsync-exclude`.
 - The first copy works exactly the same way.
+- Prefer `/update` once it's set up (manual 23): it takes a whole, matching set of files from GitHub, and then you don't copy by hand at all.
 
 **What a copy overwrites, and what it never touches:**
 

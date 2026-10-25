@@ -14,8 +14,8 @@ DART_TEST = Path(__file__).resolve().parent.parent / "app" / "test" / "protocol_
 class VectorTests(unittest.TestCase):
     def test_python_gives_the_values_the_dart_tests_expect(self):
         text = DART_TEST.read_text()
-        client = re.search(r"clientProof\(code, nonce, fp\), '([0-9a-f]{64})'", text).group(1)
-        server = re.search(r"serverProof\(code, nonce, fp, 'tok_en-123'\), '([0-9a-f]{64})'", text).group(1)
+        client = re.search(r"clientProof\(\s*code,\s*nonce,\s*fp\s*\),\s*'([0-9a-f]{64})'", text).group(1)
+        server = re.search(r"serverProof\(\s*code,\s*nonce,\s*fp,\s*'tok_en-123'\s*\),\s*'([0-9a-f]{64})'", text).group(1)
         code, nonce, fp = "K7PQ-2M9X-4TWD", "abcDEF123_-xyz", "ab" * 32
         self.assertEqual(appapi.client_proof(code, nonce, fp), client)
         self.assertEqual(appapi.server_proof(code, nonce, fp, "tok_en-123"), server)

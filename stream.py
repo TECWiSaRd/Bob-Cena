@@ -208,10 +208,37 @@ class StreamServer:
                 "power": bool(getattr(c, "power", None) and c.power.allows("dashboard")),
                 "music_enabled": bool(c.music), "music": c.music.describe() if c.music else "",
                 "model": c.cfg.brain.model.replace("claude-", ""), "effort": c.cfg.brain.effort,
+                "auto": bool(ctl.auto), "going": bool(c.home.goer and c.home.goer.active),
+                "operators": self._operators(c),
                 "sleep": c.sleep.asleep(), "version": self.version, "usage": self._usage(c),
                 "vitals": self._vitals_now(c), "events": self._events_now(c),
                 "rooms": c.home.destinations(), "room": (c.home.where()[0] if c.home.active() else None),
                 "log": [{"l": logging.getLevelName(lv), "t": tag, "m": line} for lv, tag, line in lines]}
+
+    def _operators(self, c) -> list:
+        """Who is using Bob right now: shared-console people, app devices used in the last two minutes, and web dashboard
+        users seen in the last ten. Names only, never tokens."""
+        out: list[dict] = []
+        seen: set[str] = set()
+
+        def add(name: str, via: str) -> None:
+            key = name.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append({"name": name, "via": via})
+
+        remote = getattr(c, "remote", None)
+        for who in (remote.attached() if remote is not None else []):
+            add(who["name"], "console" + (" (watching)" if who["role"] == "viewer" else ""))
+        now = time.time()
+        for name, info in self.devices.devices.items():
+            if info.get("last_seen") and now - info["last_seen"] < 120:
+                add(name, "app")
+        mono = time.monotonic()
+        for name, at in self._seen_users.items():
+            if mono - at < 600:
+                add(name, "dashboard")
+        return out
 
     @staticmethod
     def _usage(c) -> dict:
