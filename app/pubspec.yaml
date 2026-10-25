@@ -61,6 +61,18 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  fonts:
+    # Open Font License (see assets/fonts/OFL-*.txt)
+    - family: BobTitle
+      fonts:
+        - asset: assets/fonts/RubikDistressed-Regular.ttf
+    - family: BobScript
+      fonts:
+        - asset: assets/fonts/MrsSaintDelafield-Regular.ttf
+    - family: Rubik
+      fonts:
+        - asset: assets/fonts/Rubik-Variable.ttf
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

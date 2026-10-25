@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'client.dart';
+import 'theme.dart';
 
 /// Bob's live camera. Reconnects by itself if the stream drops.
 class MjpegView extends StatefulWidget {
@@ -72,14 +73,22 @@ class _MjpegViewState extends State<MjpegView> {
     return AspectRatio(
       aspectRatio: 4 / 3,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(32),
         child: Container(
           color: Colors.black,
           child: _frame == null
               ? Center(
-                  child: Text(_error ?? 'Waiting for the picture...',
-                      textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)))
-              : Image.memory(_frame!, gaplessPlayback: true, fit: BoxFit.contain),
+                  child: Text(
+                    _error ?? 'Waiting for the picture...',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                )
+              : Image.memory(
+                  _frame!,
+                  gaplessPlayback: true,
+                  fit: BoxFit.contain,
+                ),
         ),
       ),
     );
@@ -124,24 +133,32 @@ class _JoystickState extends State<Joystick> {
         onPanUpdate: (d) => _update(d.localPosition),
         onPanEnd: (_) => _release(),
         onPanCancel: _release,
-        child: Stack(children: [
-          Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: scheme.surfaceContainerHighest,
-              border: Border.all(color: scheme.outlineVariant, width: 2),
+        child: Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: scheme.surface,
+                border: Border.all(
+                  color: scheme.onSurface.withValues(alpha: 0.12),
+                  width: 2,
+                ),
+              ),
             ),
-          ),
-          Positioned(
-            left: r + _knob.dx * r * 0.7 - 32,
-            top: r + _knob.dy * r * 0.7 - 32,
-            child: Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: scheme.primary.withValues(alpha: 0.9)),
+            Positioned(
+              left: r + _knob.dx * r * 0.7 - 32,
+              top: r + _knob.dy * r * 0.7 - 32,
+              child: Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: scheme.primary.withValues(alpha: 0.9),
+                ),
+              ),
             ),
-          ),
-        ]),
+          ],
+        ),
       ),
     );
   }
@@ -167,8 +184,62 @@ class StatChip extends StatelessWidget {
     final c = color ?? Theme.of(context).colorScheme.onSurfaceVariant;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(border: Border.all(color: c.withValues(alpha: 0.5)), borderRadius: BorderRadius.circular(99)),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(99),
+      ),
       child: Text(text, style: TextStyle(color: c, fontSize: 12)),
+    );
+  }
+}
+
+/// A pill that is on or off, and shows which. Tapping it flips it.
+class TogglePill extends StatelessWidget {
+  const TogglePill({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onChanged,
+    this.danger = false,
+  });
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final void Function(bool value) onChanged;
+  final bool danger; // red when on (the emergency stop)
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final on = danger ? BobColors.red : scheme.primary;
+    return Semantics(
+      toggled: selected,
+      button: true,
+      label: label,
+      child: FilterChip(
+        label: Text(label),
+        avatar: Icon(
+          icon,
+          size: 20,
+          color: selected ? Colors.white : scheme.onSurface,
+        ),
+        selected: selected,
+        showCheckmark: false,
+        selectedColor: on,
+        backgroundColor: scheme.surface,
+        labelStyle: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: selected ? Colors.white : scheme.onSurface,
+        ),
+        side: BorderSide(
+          color: selected ? on : scheme.onSurface.withValues(alpha: 0.15),
+        ),
+        shape: const StadiumBorder(),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        onSelected: onChanged,
+      ),
     );
   }
 }

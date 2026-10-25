@@ -12,14 +12,23 @@ tools); the Android code is the same as the Mac code. Expect to adjust the look 
 
 ## What you get
 
-| Tab | |
+The app opens on a **home page**: the BOB name, whether he's online, "Welcome back, *your name*." and three cards: what he's doing right now, what
+Claude has cost today (and all time), and the Pi's temperature (or which room he's in). Tap a card for the details. **Scroll down** (or swipe up) and the welcome page really scrolls away upwards while a second, white screen rises from below with
+three rounded cards on it, and the four icons glide out from the bottom bar to the edges of the screen. The cards show what he's thinking, **who's on** (people on the shared console, app devices used in the last two minutes, web dashboard users) and
+his recent tasks. Scroll back up and everything returns. Let go half way and it finishes the move by itself. The bar along the bottom has four icons;
+tap one to open that section, and tap it again (or tap the BOB name) to go back home. It follows your device's light or dark setting by default; under **More, Appearance** you can force **Light** or **Dark**, or go back to **Auto** (follow the device). The choice is remembered.
+
+The welcome uses the name you give when you pair (or "Adam" from a device called "Adam's Mac"); change it under More. The fonts are bundled
+(open licences, `app/assets/fonts`). The look is based on `temp/bobapp-homereference.png`.
+
+| Section | |
 |---|---|
-| **Drive** | live camera, a thumb stick (or W A S D / arrows and Space = emergency stop on a Mac), a Slow switch, Pause / Resume AI, Follow me |
+| **Drive** | live camera, a thumb stick (or W A S D / arrows and Space = emergency stop on a Mac), a Slow switch, and two on/off switches: **AI thinking** and **Follow me** |
 | **Status** | what he's doing, what Claude has cost (this run, today, all time), the Pi's temperature, load, memory and power warnings, recent events |
 | **Chat** | the live log, and a box to talk to him or type a `/command` |
-| **More** | sleep / wake, mute, camera on and off, release the e-stop, `/check`, `/usage`, **go to a room**, music, and unpairing |
+| **More** | on/off switches for **AI thinking, Follow me, Sleep, Sound, Camera and Emergency stop** (blue or red when on, white when off; the screen changes at once and flips back if Bob can't be reached), `/check`, `/usage`, **go to a room** (the Go button becomes Stop while he's on the way), light/dark, music, and unpairing |
 
-The red **EMERGENCY STOP** button is on every screen. A banner appears if he can't be reached or if the e-stop is on.
+The red **EMERGENCY STOP** button is on every screen, home included. (It isn't in the reference design, but a robot that moves needs a stop button within reach.) A banner appears if he can't be reached or if the e-stop is on.
 
 ## First time: pairing (about a minute)
 
@@ -79,8 +88,10 @@ the phone on the same Wi-Fi as Bob.
 Friends you add to the private repository (Settings, Collaborators) can download from the release page; or download the files yourself and send them.
 
 **Opening it, the first time**
-- *Mac:* unzip, then **right-click Bob.app, Open, Open**. (macOS blocks apps from unidentified developers on a normal double-click; this once is enough.)
-  If it says the app is damaged, run `xattr -cr Bob.app` in Terminal once. Signing and notarising it properly needs an Apple Developer account ($99 a year); not set up.
+- *Mac:* unzip it and try to open **Bob.app**; macOS blocks it because it isn't signed with an Apple developer identity (it isn't malware). Click
+  Done, then **System Settings, Privacy & Security, scroll to Security, "Bob was blocked", Open Anyway**, and confirm. Once per Mac. (On macOS 14 and
+  older, right-click, Open also works; on 15 and later it doesn't.) If it says the app is "damaged", run `xattr -cr` on it once, then repeat the steps above.
+  Signing and notarising it properly needs an Apple Developer account ($99 a year); not set up.
 - *Android:* open the APK; allow "install unknown apps" for the browser or file app when asked. The APK is signed with a debug key, which is fine for sideloading.
 
 **Each friend pairs their own device** with a code from `/pair` (manual 25, above), on the same network as Bob.

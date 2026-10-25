@@ -4,9 +4,15 @@ import 'package:provider/provider.dart';
 import 'src/app_state.dart';
 import 'src/home_screen.dart';
 import 'src/pair_screen.dart';
+import 'src/theme.dart';
 
 void main() {
-  runApp(ChangeNotifierProvider(create: (_) => AppState()..load(), child: const BobApp()));
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => AppState()..load(),
+      child: const BobApp(),
+    ),
+  );
 }
 
 class BobApp extends StatelessWidget {
@@ -14,17 +20,24 @@ class BobApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // only the appearance setting is watched here, so the whole app isn't rebuilt every time Bob's status updates
+    final mode = context.select<AppState, ThemeMode>((s) => s.themeMode);
     return MaterialApp(
       title: 'Bob',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3B82F6)), useMaterial3: true),
-      darkTheme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3B82F6), brightness: Brightness.dark), useMaterial3: true),
-      themeMode: ThemeMode.system,
-      home: Consumer<AppState>(builder: (context, s, _) {
-        if (s.loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-        return s.profile == null ? const PairScreen() : const HomeScreen();
-      }),
+      theme: bobTheme(Brightness.light),
+      darkTheme: bobTheme(Brightness.dark),
+      themeMode: mode,
+      home: Consumer<AppState>(
+        builder: (context, s, _) {
+          if (s.loading) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return s.profile == null ? const PairScreen() : const HomeScreen();
+        },
+      ),
     );
   }
 }

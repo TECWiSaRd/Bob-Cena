@@ -24,10 +24,19 @@ class BobApiException implements Exception {
 /// same pairing must present the same one; the pairing proof then ties that certificate to the code on Bob's console, which a
 /// man in the middle cannot know.
 class BobClient {
-  BobClient({required this.host, required this.port, this.pinnedFingerprint, this.token});
+  BobClient({
+    required this.host,
+    required this.port,
+    this.pinnedFingerprint,
+    this.token,
+  });
 
-  factory BobClient.fromProfile(BobProfile p) =>
-      BobClient(host: p.host, port: p.port, pinnedFingerprint: p.fingerprint, token: p.token);
+  factory BobClient.fromProfile(BobProfile p) => BobClient(
+    host: p.host,
+    port: p.port,
+    pinnedFingerprint: p.fingerprint,
+    token: p.token,
+  );
 
   final String host;
   final int port;
@@ -57,11 +66,21 @@ class BobClient {
     return c;
   }
 
-  Uri _uri(String path) => Uri(scheme: 'https', host: host, port: port, path: path);
+  Uri _uri(String path) =>
+      Uri(scheme: 'https', host: host, port: port, path: path);
 
-  Future<Map<String, dynamic>> _json(String method, String path, {Map<String, dynamic>? body, bool auth = true}) async {
-    final req = await _http.openUrl(method, _uri(path)).timeout(const Duration(seconds: 8));
-    if (auth && token != null) req.headers.set('Authorization', 'Bearer $token');
+  Future<Map<String, dynamic>> _json(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+    bool auth = true,
+  }) async {
+    final req = await _http
+        .openUrl(method, _uri(path))
+        .timeout(const Duration(seconds: 8));
+    if (auth && token != null) {
+      req.headers.set('Authorization', 'Bearer $token');
+    }
     if (body != null) {
       // Bob's server wants a Content-Length (Dart sends chunked bodies unless told the size).
       final bytes = utf8.encode(jsonEncode(body));
@@ -70,7 +89,10 @@ class BobClient {
       req.add(bytes);
     }
     final resp = await req.close().timeout(const Duration(seconds: 10));
-    final text = await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 10));
+    final text = await resp
+        .transform(utf8.decoder)
+        .join()
+        .timeout(const Duration(seconds: 10));
     Map<String, dynamic> data;
     try {
       data = jsonDecode(text) as Map<String, dynamic>;
@@ -78,26 +100,44 @@ class BobClient {
       data = {'error': text.isEmpty ? 'no answer' : text};
     }
     if (resp.statusCode >= 400) {
-      throw BobApiException(resp.statusCode, (data['error'] ?? 'error ${resp.statusCode}').toString());
+      throw BobApiException(
+        resp.statusCode,
+        (data['error'] ?? 'error ${resp.statusCode}').toString(),
+      );
     }
     return data;
   }
 
-  Future<Map<String, dynamic>> info() => _json('GET', '/api/v1/info', auth: false);
+  Future<Map<String, dynamic>> info() =>
+      _json('GET', '/api/v1/info', auth: false);
 
   /// Pairs this device using the code shown on Bob's console. Returns the profile to keep.
   Future<BobProfile> pair(String code, String deviceName) async {
-    final information = await info(); // also records the certificate we are being shown
+    final information =
+        await info(); // also records the certificate we are being shown
     final seen = seenFingerprint;
-    if (seen == null) throw BobApiException(0, 'could not read his certificate');
+    if (seen == null) {
+      throw BobApiException(0, 'could not read his certificate');
+    }
     final nonce = newNonce();
-    final reply = await _json('POST', '/api/v1/pair',
-        body: {'device': deviceName, 'nonce': nonce, 'proof': clientProof(code, nonce, seen)}, auth: false);
+    final reply = await _json(
+      'POST',
+      '/api/v1/pair',
+      body: {
+        'device': deviceName,
+        'nonce': nonce,
+        'proof': clientProof(code, nonce, seen),
+      },
+      auth: false,
+    );
     final token = reply['token'] as String;
     // Bob proves he knew the code, saw the same certificate, and issued exactly this token.
     final expected = serverProof(code, nonce, seen, token);
     if (reply['server_proof'] != expected || reply['fingerprint'] != seen) {
-      throw BobApiException(0, 'his answer did not check out: this may not be your Bob. Nothing was saved.');
+      throw BobApiException(
+        0,
+        'his answer did not check out: this may not be your Bob. Nothing was saved.',
+      );
     }
     return BobProfile(
       name: (reply['name'] ?? information['name'] ?? 'Bob').toString(),
@@ -111,9 +151,13 @@ class BobClient {
 
   Future<Map<String, dynamic>> status() => _json('GET', '/api/v1/status');
 
-  Future<String> command(String text) async => ((await _json('POST', '/api/v1/cmd', body: {'cmd': text}))['output'] ?? '').toString();
+  Future<String> command(String text) async =>
+      ((await _json('POST', '/api/v1/cmd', body: {'cmd': text}))['output'] ??
+              '')
+          .toString();
 
-  Future<void> drive(double left, double right) => _json('POST', '/api/v1/drive', body: {'left': left, 'right': right});
+  Future<void> drive(double left, double right) =>
+      _json('POST', '/api/v1/drive', body: {'left': left, 'right': right});
 
   Future<void> unpair() => _json('POST', '/api/v1/unpair', body: {});
 
@@ -122,10 +166,14 @@ class BobClient {
     final client = _makeHttp();
     _streamClients.add(client);
     try {
-      final req = await client.openUrl('GET', _uri('/api/v1/stream')).timeout(const Duration(seconds: 8));
+      final req = await client
+          .openUrl('GET', _uri('/api/v1/stream'))
+          .timeout(const Duration(seconds: 8));
       if (token != null) req.headers.set('Authorization', 'Bearer $token');
       final resp = await req.close().timeout(const Duration(seconds: 10));
-      if (resp.statusCode != 200) throw BobApiException(resp.statusCode, 'no video (${resp.statusCode})');
+      if (resp.statusCode != 200) {
+        throw BobApiException(resp.statusCode, 'no video (${resp.statusCode})');
+      }
       final parser = MjpegParser();
       await for (final chunk in resp) {
         for (final frame in parser.add(chunk)) {

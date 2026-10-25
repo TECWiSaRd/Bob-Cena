@@ -8,9 +8,13 @@ import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'widgets.dart';
 
-const _bottomRoom = 96.0; // keeps content clear of the emergency stop button
+const _bottomRoom = 210.0; // keeps content clear of the emergency stop button
 
-Future<void> runCommand(BuildContext context, String text, {bool dialogIfLong = true}) async {
+Future<void> runCommand(
+  BuildContext context,
+  String text, {
+  bool dialogIfLong = true,
+}) async {
   final s = context.read<AppState>();
   final messenger = ScaffoldMessenger.of(context);
   try {
@@ -21,8 +25,18 @@ Future<void> runCommand(BuildContext context, String text, {bool dialogIfLong = 
         context: context,
         builder: (c) => AlertDialog(
           title: Text(text.split(' ').first),
-          content: SingleChildScrollView(child: SelectableText(out, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-          actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('OK'))],
+          content: SingleChildScrollView(
+            child: SelectableText(
+              out,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(c),
+              child: const Text('OK'),
+            ),
+          ],
         ),
       );
     } else {
@@ -30,6 +44,100 @@ Future<void> runCommand(BuildContext context, String text, {bool dialogIfLong = 
     }
   } catch (e) {
     messenger.showSnackBar(SnackBar(content: Text(e.toString())));
+  }
+}
+
+/// Flip a setting on Bob: the switch changes at once, and Bob's answer (if any) is shown. Flips back if he can't be reached.
+Future<void> flip(
+  BuildContext context,
+  Map<String, dynamic> patch,
+  String command,
+) async {
+  final s = context.read<AppState>();
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final out = (await s.toggle(patch, command)).trim();
+    if (out.isNotEmpty && context.mounted) {
+      messenger.showSnackBar(SnackBar(content: Text(out)));
+    }
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text(e.toString())));
+  }
+}
+
+/// The on/off controls. [all] adds the ones that belong on the More page; the Drive page shows just the two it needs.
+class ControlToggles extends StatelessWidget {
+  const ControlToggles({super.key, this.all = false});
+  final bool all;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.watch<AppState>();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: all ? WrapAlignment.start : WrapAlignment.center,
+      children: [
+        TogglePill(
+          key: const Key('toggle-ai'),
+          label: 'AI thinking',
+          icon: Icons.psychology,
+          selected: s.aiOn,
+          onChanged: (v) =>
+              flip(context, {'auto': v}, v ? '/resume' : '/pause'),
+        ),
+        TogglePill(
+          key: const Key('toggle-follow'),
+          label: 'Follow me',
+          icon: Icons.directions_walk,
+          selected: s.following,
+          onChanged: (v) =>
+              flip(context, {'follow': v}, v ? '/follow 30' : '/follow off'),
+        ),
+        if (all) ...[
+          TogglePill(
+            key: const Key('toggle-sleep'),
+            label: 'Sleep',
+            icon: Icons.bedtime,
+            selected: s.sleeping,
+            onChanged: (v) =>
+                flip(context, {'sleep': v}, v ? '/sleep on' : '/sleep off'),
+          ),
+          TogglePill(
+            key: const Key('toggle-sound'),
+            label: 'Sound',
+            icon: s.soundOn ? Icons.volume_up : Icons.volume_off,
+            selected: s.soundOn,
+            onChanged: (v) =>
+                flip(context, {'muted': !v}, v ? '/unmute' : '/mute'),
+          ),
+          TogglePill(
+            key: const Key('toggle-camera'),
+            label: 'Camera',
+            icon: s.cameraOn ? Icons.videocam : Icons.videocam_off,
+            selected: s.cameraOn,
+            onChanged: (v) => flip(context, {
+              'camera': v ? 'on' : 'OFF',
+            }, v ? '/camera on' : '/camera off'),
+          ),
+          TogglePill(
+            key: const Key('toggle-estop'),
+            label: 'Emergency stop',
+            icon: Icons.front_hand,
+            selected: s.estop,
+            danger: true,
+            onChanged: (v) {
+              if (v) {
+                unawaited(s.drive(0, 0));
+              }
+              flip(context, {
+                'mode': v ? 'E-STOP' : 'PAUSED',
+              }, v ? '/estop' : '/clear');
+            },
+          ),
+        ],
+      ],
+    );
   }
 }
 
@@ -87,8 +195,14 @@ class _DriveTabState extends State<DriveTab> {
       return KeyEventResult.handled;
     }
     final driving = <LogicalKeyboardKey>{
-      LogicalKeyboardKey.keyW, LogicalKeyboardKey.arrowUp, LogicalKeyboardKey.keyS, LogicalKeyboardKey.arrowDown,
-      LogicalKeyboardKey.keyA, LogicalKeyboardKey.arrowLeft, LogicalKeyboardKey.keyD, LogicalKeyboardKey.arrowRight,
+      LogicalKeyboardKey.keyW,
+      LogicalKeyboardKey.arrowUp,
+      LogicalKeyboardKey.keyS,
+      LogicalKeyboardKey.arrowDown,
+      LogicalKeyboardKey.keyA,
+      LogicalKeyboardKey.arrowLeft,
+      LogicalKeyboardKey.keyD,
+      LogicalKeyboardKey.arrowRight,
     };
     if (!driving.contains(k)) return KeyEventResult.ignored;
     if (event is KeyDownEvent) {
@@ -96,11 +210,22 @@ class _DriveTabState extends State<DriveTab> {
     } else if (event is KeyUpEvent) {
       _keys.remove(k);
     }
-    final up = _keys.contains(LogicalKeyboardKey.keyW) || _keys.contains(LogicalKeyboardKey.arrowUp);
-    final down = _keys.contains(LogicalKeyboardKey.keyS) || _keys.contains(LogicalKeyboardKey.arrowDown);
-    final left = _keys.contains(LogicalKeyboardKey.keyA) || _keys.contains(LogicalKeyboardKey.arrowLeft);
-    final right = _keys.contains(LogicalKeyboardKey.keyD) || _keys.contains(LogicalKeyboardKey.arrowRight);
-    _setStick((right ? 1.0 : 0.0) - (left ? 1.0 : 0.0), (up ? 1.0 : 0.0) - (down ? 1.0 : 0.0));
+    final up =
+        _keys.contains(LogicalKeyboardKey.keyW) ||
+        _keys.contains(LogicalKeyboardKey.arrowUp);
+    final down =
+        _keys.contains(LogicalKeyboardKey.keyS) ||
+        _keys.contains(LogicalKeyboardKey.arrowDown);
+    final left =
+        _keys.contains(LogicalKeyboardKey.keyA) ||
+        _keys.contains(LogicalKeyboardKey.arrowLeft);
+    final right =
+        _keys.contains(LogicalKeyboardKey.keyD) ||
+        _keys.contains(LogicalKeyboardKey.arrowRight);
+    _setStick(
+      (right ? 1.0 : 0.0) - (left ? 1.0 : 0.0),
+      (up ? 1.0 : 0.0) - (down ? 1.0 : 0.0),
+    );
     return KeyEventResult.handled;
   }
 
@@ -113,29 +238,35 @@ class _DriveTabState extends State<DriveTab> {
       focusNode: _focus,
       autofocus: true,
       onKeyEvent: _onKey,
-      child: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom), children: [
-        if (client != null) MjpegView(key: ValueKey(client), client: client),
-        const SizedBox(height: 12),
-        Center(child: Joystick(onChanged: _setStick)),
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Text('Slow'),
-          Switch(value: _slow, onChanged: (v) => setState(() => _slow = v)),
-        ]),
-        Center(
-          child: Text(
-            desktop ? 'Drag the stick, or use W A S D / arrow keys. Space is the emergency stop.' : 'Drag the stick to drive. He stops when you let go.',
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
-            textAlign: TextAlign.center,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom),
+        children: [
+          if (client != null) MjpegView(key: ValueKey(client), client: client),
+          const SizedBox(height: 12),
+          Center(child: Joystick(onChanged: _setStick)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('Slow'),
+              Switch(value: _slow, onChanged: (v) => setState(() => _slow = v)),
+            ],
           ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(spacing: 8, runSpacing: 8, alignment: WrapAlignment.center, children: [
-          FilledButton.tonal(onPressed: () => runCommand(context, '/pause'), child: const Text('Pause AI')),
-          FilledButton.tonal(onPressed: () => runCommand(context, '/resume'), child: const Text('Resume AI')),
-          FilledButton.tonal(onPressed: () => runCommand(context, '/follow 30'), child: const Text('Follow me')),
-          FilledButton.tonal(onPressed: () => runCommand(context, '/follow off'), child: const Text('Stop following')),
-        ]),
-      ]),
+          Center(
+            child: Text(
+              desktop
+                  ? 'Drag the stick, or use W A S D / arrow keys. Space is the emergency stop.'
+                  : 'Drag the stick to drive. He stops when you let go.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const ControlToggles(),
+        ],
+      ),
     );
   }
 }
@@ -156,62 +287,109 @@ class StatusTab extends StatelessWidget {
     String money(Object? v) => v is num ? '\$${v.toStringAsFixed(2)}' : '-';
 
     Widget card(String title, List<Widget> children) => Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: Theme.of(context).textTheme.titleSmall),
-              const SizedBox(height: 8),
-              ...children,
-            ]),
-          ),
-        );
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            ...children,
+          ],
+        ),
+      ),
+    );
 
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom), children: [
-      card('Bob', [
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          StatChip('AI ${st['thinking'] == true ? 'thinking' : 'idle'}'),
-          StatChip('camera ${st['camera']}', color: st['camera'] == 'OFF' ? scheme.tertiary : null),
-          StatChip('mic ${st['mic']}'),
-          StatChip(st['muted'] == true ? 'audio MUTED' : 'audio on'),
-          StatChip('speed cap ${st['cap']}'),
-          if (st['sleep'] == true) StatChip('sleeping', color: Colors.indigo),
-          if (st['follow'] == true) const StatChip('following', color: Colors.green),
-          if ((st['radio'] ?? '').toString().isNotEmpty) StatChip('radio ${st['radio']}'),
-          if (st['dist'] != null) StatChip('${st['dist']} cm ahead', color: (st['dist'] as num) < 20 ? scheme.error : null),
-          if (st['room'] != null) StatChip('in the ${st['room']}'),
-          StatChip('${st['model']} / ${st['effort']}'),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom),
+      children: [
+        card('Bob', [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              StatChip('AI ${st['thinking'] == true ? 'thinking' : 'idle'}'),
+              StatChip(
+                'camera ${st['camera']}',
+                color: st['camera'] == 'OFF' ? scheme.tertiary : null,
+              ),
+              StatChip('mic ${st['mic']}'),
+              StatChip(st['muted'] == true ? 'audio MUTED' : 'audio on'),
+              StatChip('speed cap ${st['cap']}'),
+              if (st['sleep'] == true)
+                StatChip('sleeping', color: Colors.indigo),
+              if (st['follow'] == true)
+                const StatChip('following', color: Colors.green),
+              if ((st['radio'] ?? '').toString().isNotEmpty)
+                StatChip('radio ${st['radio']}'),
+              if (st['dist'] != null)
+                StatChip(
+                  '${st['dist']} cm ahead',
+                  color: (st['dist'] as num) < 20 ? scheme.error : null,
+                ),
+              if (st['room'] != null) StatChip('in the ${st['room']}'),
+              StatChip('${st['model']} / ${st['effort']}'),
+            ],
+          ),
         ]),
-      ]),
-      card('What Claude has cost', [
-        Text('This run: ${money(st['cost'])}'),
-        Text('Today: ${money(usage['today'])}'),
-        Text('All time: ${money(usage['all'])}${usage['since'] != null ? '  (since ${usage['since']})' : ''}'),
-        const SizedBox(height: 4),
-        Text('An estimate from Bob\'s own calls.', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-      ]),
-      card('The Pi', [
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          if (vitals['temp_c'] != null)
-            StatChip('${(vitals['temp_c'] as num).round()} °C', color: (vitals['temp_c'] as num) >= 80 ? scheme.error : (vitals['temp_c'] as num) >= 70 ? scheme.tertiary : null),
-          if (vitals['load'] != null) StatChip('load ${(vitals['load'] as num).toStringAsFixed(1)}'),
-          if (vitals['mem_mb'] != null) StatChip('${vitals['mem_mb']} MB free'),
-          if (vitals['disk_gb'] != null) StatChip('${(vitals['disk_gb'] as num).toStringAsFixed(1)} GB disk'),
-          if (throttled & 5 != 0) StatChip('power or heat limit', color: scheme.error),
-          if (vitals.isEmpty) const Text('No readings'),
+        card('What Claude has cost', [
+          Text('This run: ${money(st['cost'])}'),
+          Text('Today: ${money(usage['today'])}'),
+          Text(
+            'All time: ${money(usage['all'])}${usage['since'] != null ? '  (since ${usage['since']})' : ''}',
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'An estimate from Bob\'s own calls.',
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
         ]),
-        const SizedBox(height: 8),
-        Text('Bob ${st['version']}', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-      ]),
-      if (events.isNotEmpty)
-        card('Recent events', [
-          for (final e in events.reversed)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Text('${(e['t'] ?? '').toString().padRight(19).substring(11, 19)}  ${e['kind']}  ${e['text']}',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-            ),
+        card('The Pi', [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (vitals['temp_c'] != null)
+                StatChip(
+                  '${(vitals['temp_c'] as num).round()} °C',
+                  color: (vitals['temp_c'] as num) >= 80
+                      ? scheme.error
+                      : (vitals['temp_c'] as num) >= 70
+                      ? scheme.tertiary
+                      : null,
+                ),
+              if (vitals['load'] != null)
+                StatChip('load ${(vitals['load'] as num).toStringAsFixed(1)}'),
+              if (vitals['mem_mb'] != null)
+                StatChip('${vitals['mem_mb']} MB free'),
+              if (vitals['disk_gb'] != null)
+                StatChip(
+                  '${(vitals['disk_gb'] as num).toStringAsFixed(1)} GB disk',
+                ),
+              if (throttled & 5 != 0)
+                StatChip('power or heat limit', color: scheme.error),
+              if (vitals.isEmpty) const Text('No readings'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Bob ${st['version']}',
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
         ]),
-    ]);
+        if (events.isNotEmpty)
+          card('Recent events', [
+            for (final e in events.reversed)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  '${(e['t'] ?? '').toString().padRight(19).substring(11, 19)}  ${e['kind']}  ${e['text']}',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                ),
+              ),
+          ]),
+      ],
+    );
   }
 }
 
@@ -253,39 +431,56 @@ class _ChatTabState extends State<ChatTab> {
 
   @override
   Widget build(BuildContext context) {
-    final lines = ((context.watch<AppState>().status['log'] as List?) ?? const []).cast<Map>();
-    return Column(children: [
-      Expanded(
-        child: ListView.builder(
-          controller: _scroll,
-          reverse: true,
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          itemCount: lines.length,
-          itemBuilder: (c, i) {
-            final row = lines[lines.length - 1 - i];
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 1),
-              child: Text(row['m'].toString(),
-                  style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: _color(c, '${row['l']}', '${row['t']}'))),
-            );
-          },
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, _bottomRoom),
-        child: Row(children: [
-          Expanded(
-            child: TextField(
-              controller: _text,
-              onSubmitted: (_) => _send(),
-              decoration: const InputDecoration(hintText: 'Say something to Bob, or a /command', border: OutlineInputBorder(), isDense: true),
+    final lines =
+        ((context.watch<AppState>().status['log'] as List?) ?? const [])
+            .cast<Map>();
+    return Column(
+      children: [
+        Expanded(
+          child: Card(
+            margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: ListView.builder(
+              controller: _scroll,
+              reverse: true,
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+              itemCount: lines.length,
+              itemBuilder: (c, i) {
+                final row = lines[lines.length - 1 - i];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 1),
+                  child: Text(
+                    row['m'].toString(),
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      color: _color(c, '${row['l']}', '${row['t']}'),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
-          const SizedBox(width: 8),
-          IconButton.filled(onPressed: _send, icon: const Icon(Icons.send)),
-        ]),
-      ),
-    ]);
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, _bottomRoom),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _text,
+                  onSubmitted: (_) => _send(),
+                  decoration: const InputDecoration(
+                    hintText: 'Say something to Bob, or a /command',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(onPressed: _send, icon: const Icon(Icons.send)),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -304,86 +499,205 @@ class _MoreTabState extends State<MoreTab> {
   Widget build(BuildContext context) {
     final s = context.watch<AppState>();
     final rooms = s.rooms;
-    final room = rooms.contains(_room) ? _room : (rooms.isEmpty ? null : rooms.first);
+    final room = rooms.contains(_room)
+        ? _room
+        : (rooms.isEmpty ? null : rooms.first);
     Widget cmd(String label, String text, {IconData? icon}) =>
-        FilledButton.tonalIcon(onPressed: () => runCommand(context, text), icon: Icon(icon ?? Icons.bolt), label: Text(label));
+        FilledButton.tonalIcon(
+          onPressed: () => runCommand(context, text),
+          icon: Icon(icon ?? Icons.bolt),
+          label: Text(label),
+        );
 
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom), children: [
-      Text('Controls', style: Theme.of(context).textTheme.titleSmall),
-      const SizedBox(height: 8),
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        cmd('Sleep', '/sleep on', icon: Icons.bedtime),
-        cmd('Wake up', '/sleep off', icon: Icons.wb_sunny),
-        cmd('Mute', '/mute', icon: Icons.volume_off),
-        cmd('Unmute', '/unmute', icon: Icons.volume_up),
-        cmd('Camera on', '/camera on', icon: Icons.videocam),
-        cmd('Camera off', '/camera off', icon: Icons.videocam_off),
-        cmd('Release e-stop', '/clear', icon: Icons.lock_open),
-        cmd('Check everything', '/check', icon: Icons.health_and_safety),
-        cmd('Cost', '/usage', icon: Icons.attach_money),
-      ]),
-      if (rooms.isNotEmpty) ...[
-        const SizedBox(height: 20),
-        Text('Go to a room', style: Theme.of(context).textTheme.titleSmall),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom),
+      children: [
+        Text('Controls', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
-        Row(children: [
-          Expanded(
-            child: DropdownButtonFormField<String>(
-              initialValue: room,
-              items: [for (final r in rooms) DropdownMenuItem(value: r, child: Text(r))],
-              onChanged: (v) => setState(() => _room = v),
-              decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+        const ControlToggles(all: true),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            cmd('Check everything', '/check', icon: Icons.health_and_safety),
+            cmd('Cost', '/usage', icon: Icons.attach_money),
+          ],
+        ),
+        if (rooms.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Text('Go to a room', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: room,
+                  items: [
+                    for (final r in rooms)
+                      DropdownMenuItem(value: r, child: Text(r)),
+                  ],
+                  onChanged: (v) => setState(() => _room = v),
+                  decoration: const InputDecoration(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                key: const Key('go-toggle'),
+                onPressed: s.going
+                    ? () => flip(context, {'going': false}, '/goto stop')
+                    : room == null
+                    ? null
+                    : () => flip(context, {'going': true}, '/goto $room'),
+                icon: Icon(s.going ? Icons.stop : Icons.play_arrow),
+                label: Text(s.going ? 'Stop' : 'Go'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'He follows the room\'s tag, slowly, and stops if anything is in the way.',
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(width: 8),
-          FilledButton(onPressed: room == null ? null : () => runCommand(context, '/goto $room'), child: const Text('Go')),
-          const SizedBox(width: 8),
-          OutlinedButton(onPressed: () => runCommand(context, '/goto stop'), child: const Text('Stop')),
-        ]),
-        const SizedBox(height: 4),
-        Text('He follows the room\'s tag, slowly, and stops if anything is in the way.',
-            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-      ],
-      if (s.hasMusic) ...[
-        const SizedBox(height: 20),
-        Text('Music  ${s.status['music'] ?? ''}', style: Theme.of(context).textTheme.titleSmall),
+        ],
+        if (s.hasMusic) ...[
+          const SizedBox(height: 20),
+          Text(
+            'Music  ${s.status['music'] ?? ''}',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              IconButton.filledTonal(
+                onPressed: () => runCommand(context, '/music prev'),
+                icon: const Icon(Icons.skip_previous),
+              ),
+              IconButton.filledTonal(
+                onPressed: () => runCommand(context, '/music play'),
+                icon: const Icon(Icons.play_arrow),
+              ),
+              IconButton.filledTonal(
+                onPressed: () => runCommand(context, '/music pause'),
+                icon: const Icon(Icons.pause),
+              ),
+              IconButton.filledTonal(
+                onPressed: () => runCommand(context, '/music next'),
+                icon: const Icon(Icons.skip_next),
+              ),
+              IconButton.filledTonal(
+                onPressed: () => runCommand(context, '/music vol down'),
+                icon: const Icon(Icons.volume_down),
+              ),
+              IconButton.filledTonal(
+                onPressed: () => runCommand(context, '/music vol up'),
+                icon: const Icon(Icons.volume_up),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 24),
+        Text('Appearance', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
-        Wrap(spacing: 8, children: [
-          IconButton.filledTonal(onPressed: () => runCommand(context, '/music prev'), icon: const Icon(Icons.skip_previous)),
-          IconButton.filledTonal(onPressed: () => runCommand(context, '/music play'), icon: const Icon(Icons.play_arrow)),
-          IconButton.filledTonal(onPressed: () => runCommand(context, '/music pause'), icon: const Icon(Icons.pause)),
-          IconButton.filledTonal(onPressed: () => runCommand(context, '/music next'), icon: const Icon(Icons.skip_next)),
-          IconButton.filledTonal(onPressed: () => runCommand(context, '/music vol down'), icon: const Icon(Icons.volume_down)),
-          IconButton.filledTonal(onPressed: () => runCommand(context, '/music vol up'), icon: const Icon(Icons.volume_up)),
-        ]),
-      ],
-      const SizedBox(height: 24),
-      Text('This device', style: Theme.of(context).textTheme.titleSmall),
-      const SizedBox(height: 8),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text('Paired with ${s.robotName}'),
-        subtitle: Text('${s.profile?.host}:${s.profile?.port}\nas "${s.profile?.device}"\ncertificate ${s.profile?.fingerprint.substring(0, 16)}...'),
-        isThreeLine: true,
-      ),
-      OutlinedButton.icon(
-        onPressed: () async {
-          final ok = await showDialog<bool>(
-            context: context,
-            builder: (c) => AlertDialog(
-              title: const Text('Unpair this device?'),
-              content: Text('${s.robotName} will forget this device and you will need a new code to add it again.'),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
-                FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Unpair')),
-              ],
+        SegmentedButton<ThemeMode>(
+          key: const Key('appearance'),
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(
+              value: ThemeMode.system,
+              icon: Icon(Icons.brightness_auto),
+              label: Text('Auto'),
             ),
-          );
-          if (ok == true) await s.forget();
-        },
-        icon: const Icon(Icons.link_off),
-        label: const Text('Unpair this device'),
-      ),
-    ]);
+            ButtonSegment(
+              value: ThemeMode.light,
+              icon: Icon(Icons.light_mode),
+              label: Text('Light'),
+            ),
+            ButtonSegment(
+              value: ThemeMode.dark,
+              icon: Icon(Icons.dark_mode),
+              label: Text('Dark'),
+            ),
+          ],
+          selected: {s.themeMode},
+          onSelectionChanged: (v) => s.setThemeMode(v.first),
+        ),
+        const SizedBox(height: 24),
+        Text('This device', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          key: const Key('your-name'),
+          leading: const Icon(Icons.person_outline),
+          title: Text(s.userName ?? 'Add your name'),
+          subtitle: const Text('shown in the welcome on the home page'),
+          trailing: const Icon(Icons.edit_outlined),
+          onTap: () async {
+            final controller = TextEditingController(text: s.userName ?? '');
+            final name = await showDialog<String>(
+              context: context,
+              builder: (c) => AlertDialog(
+                title: const Text('Your name'),
+                content: TextField(
+                  controller: controller,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.words,
+                  onSubmitted: (v) => Navigator.pop(c, v),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(c),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(c, controller.text),
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            );
+            if (name != null) await s.setUserName(name);
+          },
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('Paired with ${s.robotName}'),
+          subtitle: Text(
+            '${s.profile?.host}:${s.profile?.port}\nas "${s.profile?.device}"\ncertificate ${s.profile?.fingerprint.substring(0, 16)}...',
+          ),
+          isThreeLine: true,
+        ),
+        OutlinedButton.icon(
+          onPressed: () async {
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (c) => AlertDialog(
+                title: const Text('Unpair this device?'),
+                content: Text(
+                  '${s.robotName} will forget this device and you will need a new code to add it again.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(c, false),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(c, true),
+                    child: const Text('Unpair'),
+                  ),
+                ],
+              ),
+            );
+            if (ok == true) await s.forget();
+          },
+          icon: const Icon(Icons.link_off),
+          label: const Text('Unpair this device'),
+        ),
+      ],
+    );
   }
 }

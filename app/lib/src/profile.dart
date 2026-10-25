@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// One paired Bob: where he is, which certificate to trust, and this device's token.
@@ -11,32 +12,37 @@ class BobProfile {
     required this.fingerprint,
     required this.token,
     required this.device,
+    this.user,
   });
 
   final String name;
   final String host;
   final int port;
-  final String fingerprint; // SHA-256 of Bob's HTTPS certificate: the app accepts only this one
+  final String
+  fingerprint; // SHA-256 of Bob's HTTPS certificate: the app accepts only this one
   final String token;
   final String device; // the name this device was paired under
+  final String? user; // who is using the app, for "Welcome back, Adam"
 
-  BobProfile copyWith({String? host, int? port}) => BobProfile(
-        name: name,
-        host: host ?? this.host,
-        port: port ?? this.port,
-        fingerprint: fingerprint,
-        token: token,
-        device: device,
-      );
+  BobProfile copyWith({String? host, int? port, String? user}) => BobProfile(
+    name: name,
+    host: host ?? this.host,
+    port: port ?? this.port,
+    fingerprint: fingerprint,
+    token: token,
+    device: device,
+    user: user ?? this.user,
+  );
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'host': host,
-        'port': port,
-        'fingerprint': fingerprint,
-        'token': token,
-        'device': device,
-      };
+    'name': name,
+    'host': host,
+    'port': port,
+    'fingerprint': fingerprint,
+    'token': token,
+    'device': device,
+    if (user != null) 'user': user,
+  };
 
   static BobProfile? fromJson(Object? data) {
     if (data is! Map) return null;
@@ -48,6 +54,7 @@ class BobProfile {
         fingerprint: data['fingerprint'] as String,
         token: data['token'] as String,
         device: data['device'] as String,
+        user: data['user'] as String?,
       );
     } catch (_) {
       return null;
@@ -72,6 +79,23 @@ class ProfileStore {
   Future<void> save(BobProfile profile) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, jsonEncode(profile.toJson()));
+  }
+
+  static const _themeKey = 'bob_theme_mode_v1';
+
+  /// Light, dark, or follow the device (the default).
+  Future<ThemeMode> loadThemeMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return switch (prefs.getString(_themeKey)) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
+  }
+
+  Future<void> saveThemeMode(ThemeMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_themeKey, mode.name);
   }
 
   Future<void> clear() async {
