@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-__version__ = "26.11-dev"
+__version__ = "26.10.2"
 
 
 def files_hash(paths) -> str:

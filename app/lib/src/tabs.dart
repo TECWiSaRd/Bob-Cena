@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'app_state.dart';
+import 'app_update.dart';
 import 'widgets.dart';
 
 const _bottomRoom = 210.0; // keeps content clear of the emergency stop button
@@ -674,6 +675,10 @@ class _MoreTabState extends State<MoreTab> {
           onSelectionChanged: (v) => s.setThemeMode(v.first),
         ),
         const SizedBox(height: 24),
+        Text('App updates', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        const UpdateCard(),
+        const SizedBox(height: 24),
         Text('This device', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
         ListTile(
@@ -745,6 +750,80 @@ class _MoreTabState extends State<MoreTab> {
           label: const Text('Unpair this device'),
         ),
       ],
+    );
+  }
+}
+
+/// The version of this app, what GitHub's latest release is, and a button to fetch it.
+class UpdateCard extends StatelessWidget {
+  const UpdateCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.watch<AppState>();
+    final scheme = Theme.of(context).colorScheme;
+    final latest = s.latestRelease;
+    final String line;
+    if (s.checkingUpdate) {
+      line = 'Checking GitHub...';
+    } else if (s.updateAvailable) {
+      line = 'Version ${latest!.version} is out. You have $appVersion.';
+    } else if (latest != null) {
+      line = "You're up to date ($appVersion).";
+    } else {
+      line = 'Bob app $appVersion';
+    }
+    return Card(
+      key: const Key('update-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(line, key: const Key('update-line')),
+            if (s.updateProblem != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  s.updateProblem!,
+                  style: TextStyle(color: scheme.error, fontSize: 12),
+                ),
+              ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (s.updateAvailable)
+                  FilledButton.icon(
+                    key: const Key('update-download'),
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      final ok = await s.downloadUpdate();
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            ok
+                                ? 'Opening the download. When it finishes, open it to install${Platform.isMacOS ? ' (drag Bob into Applications, replacing the old one)' : ''}.'
+                                : "Couldn't open the browser. The release is on GitHub: ${latest.page}",
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.download),
+                    label: Text('Download ${latest!.version}'),
+                  ),
+                OutlinedButton.icon(
+                  key: const Key('update-check'),
+                  onPressed: s.checkingUpdate ? null : s.checkForUpdate,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Check for updates'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -114,3 +114,13 @@ I tried this here: the zip is 8.7 MB and the unzipped app starts.
 | "Bob no longer recognises this device" | it was removed with `/devices remove`; tap Pair again |
 | No picture | the camera is off (`/camera on`), or the camera is stuck (`/check`) |
 | Mac asks to allow local network access | allow it; without it Bonjour can't find Bob (you can still type his address) |
+
+## Updating the app
+
+Open **More**, then **App updates**. The app asks GitHub for the newest release (it also asks once when it starts). If there is a
+newer one, a **Download** button appears; it opens the download in your browser. On a Mac, open the zip and drag Bob into
+Applications, replacing the old one. On Android, open the downloaded file to install it over the old app.
+
+The app does not replace itself: that would need extra permissions it doesn't have. On Android, an update only installs over the old
+app if both were signed with the same key; builds made by GitHub's workflow use a throw-away key each time, so you may have to
+uninstall the old app first until a fixed signing key is set up.

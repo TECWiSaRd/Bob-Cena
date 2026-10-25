@@ -16,6 +16,10 @@ Mac and Android).
 - Friends share one Bob across houses (some with Home Assistant, some without). Another robot, **John**, is a friend's; they talk over a signed radio.
 - No licence file on purpose ("no licence for now").
 
+**App updates:** More, App updates checks GitHub's latest release (`app_update.dart`; `appVersion` must equal `pubspec.yaml`'s version and
+`version.py`'s `__version__`; a test checks pubspec) and opens the download in the browser. It does not self-install (macOS sandbox; Android
+CI builds use a throw-away debug key, so a stable release key is still needed for in-place updates).
+
 ## Rules that matter most
 
 1. **Safety limits live in code, never in prompts.** Claude can ask for anything; `hardware.Drive` and the overrides decide. Overrides

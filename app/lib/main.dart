@@ -9,7 +9,7 @@ import 'src/theme.dart';
 void main() {
   runApp(
     ChangeNotifierProvider(
-      create: (_) => AppState()..load(),
+      create: (_) => AppState(checkUpdatesAtStart: true)..load(),
       child: const BobApp(),
     ),
   );

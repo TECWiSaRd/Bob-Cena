@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 
+import 'app_update.dart';
 import 'client.dart';
 import 'discovery.dart';
 import 'profile.dart';
@@ -13,11 +14,28 @@ class AppState extends ChangeNotifier {
     ProfileStore? store,
     this.pollEvery = const Duration(seconds: 1),
     this.autoConnect = true,
-  }) : _store = store ?? ProfileStore();
+    this.checkUpdatesAtStart = false,
+    Future<ReleaseInfo?> Function()? fetchRelease,
+    Future<bool> Function(Uri)? openUrl,
+  }) : _store = store ?? ProfileStore(),
+       _fetchRelease = fetchRelease ?? fetchLatestRelease,
+       _openUrl = openUrl ?? openInBrowser;
 
   final ProfileStore _store;
   final Duration pollEvery;
   final bool autoConnect; // false in tests that must not touch the network
+  final bool
+  checkUpdatesAtStart; // the real app asks GitHub once at start-up; tests don't
+  bool _disposed = false;
+  final Future<ReleaseInfo?> Function() _fetchRelease;
+  final Future<bool> Function(Uri) _openUrl;
+
+  /// The newest GitHub release, once asked (More, App updates).
+  ReleaseInfo? latestRelease;
+  bool checkingUpdate = false;
+  String? updateProblem;
+  bool get updateAvailable =>
+      latestRelease != null && isNewer(latestRelease!.version, appVersion);
 
   bool loading = true;
   ThemeMode themeMode =
@@ -40,6 +58,41 @@ class AppState extends ChangeNotifier {
     loading = false;
     if (profile != null) _connect(profile!);
     notifyListeners();
+    if (checkUpdatesAtStart) unawaited(checkForUpdate(quiet: true));
+  }
+
+  /// Asks GitHub for the newest release. [quiet] (the check at start-up) says nothing when it can't reach GitHub.
+  Future<void> checkForUpdate({bool quiet = false}) async {
+    if (checkingUpdate) return;
+    checkingUpdate = true;
+    if (!quiet) updateProblem = null;
+    notifyListeners();
+    try {
+      final r = await _fetchRelease();
+      if (r == null) {
+        if (!quiet) {
+          updateProblem = "GitHub's answer wasn't a release I understand.";
+        }
+      } else {
+        latestRelease = r;
+      }
+    } catch (_) {
+      if (!quiet) updateProblem = "Can't reach GitHub just now.";
+    } finally {
+      checkingUpdate = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  /// Starts the download of the newest release in the browser (or its page when it has no file for this device).
+  Future<bool> downloadUpdate() async {
+    final r = latestRelease;
+    if (r == null) return false;
+    try {
+      return await _openUrl(r.download ?? r.page);
+    } catch (_) {
+      return false;
+    }
   }
 
   void _connect(BobProfile p) {
@@ -298,6 +351,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _timer?.cancel();
     client?.close();
     super.dispose();
