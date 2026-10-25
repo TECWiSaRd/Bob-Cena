@@ -32,6 +32,7 @@ class AppState extends ChangeNotifier {
   int _failures = 0;
   DateTime _lastRediscovery = DateTime.fromMillisecondsSinceEpoch(0);
   bool _polling = false;
+  int _session = 0;
 
   Future<void> load() async {
     profile = await _store.load();
@@ -42,6 +43,7 @@ class AppState extends ChangeNotifier {
   }
 
   void _connect(BobProfile p) {
+    _session++;
     if (!autoConnect) {
       return;
     }
@@ -65,10 +67,14 @@ class AppState extends ChangeNotifier {
 
   /// Forget Bob on this device. Also tells Bob to forget the device if he can be reached.
   Future<void> forget() async {
+    // In-flight polls belong to the old identity and must not repopulate the
+    // UI while this device is being unpaired.
+    _session++;
+    _timer?.cancel();
+    _timer = null;
     try {
       await client?.unpair();
     } catch (_) {}
-    _timer?.cancel();
     client?.close();
     client = null;
     profile = null;
@@ -82,32 +88,52 @@ class AppState extends ChangeNotifier {
 
   Future<void> poll() async {
     final c = client;
-    if (c == null || _polling) return;
+    if (c == null || _polling || revoked) return;
+    final session = _session;
     _polling = true;
+    var stale = false;
     try {
       final s = await c.status();
-      status = s;
-      online = true;
-      problem = null;
-      _failures = 0;
+      stale = session != _session || !identical(c, client);
+      if (!stale) {
+        status = s;
+        online = true;
+        problem = null;
+        _failures = 0;
+      }
     } on BobApiException catch (e) {
-      online = false;
-      if (e.unauthorized) {
-        revoked = true;
-        problem = 'Bob no longer recognises this device. Pair it again.';
-        _timer?.cancel();
-      } else {
-        problem = e.message;
-        _failures++;
+      stale = session != _session || !identical(c, client);
+      if (!stale) {
+        online = false;
+        if (e.unauthorized) {
+          revoked = true;
+          problem = 'Bob no longer recognises this device. Pair it again.';
+          _timer?.cancel();
+          _timer = null;
+        } else {
+          problem = e.message;
+          _failures++;
+        }
       }
     } catch (e) {
-      online = false;
-      _failures++;
-      problem = c.certificateRejected
-          ? "The certificate doesn't match the one this device was paired with. This may not be your Bob."
-          : "Can't reach ${profile?.name ?? 'Bob'}";
+      stale = session != _session || !identical(c, client);
+      if (!stale) {
+        online = false;
+        _failures++;
+        problem = c.certificateRejected
+            ? "The certificate doesn't match the one this device was paired with. This may not be your Bob, or Bob made a new certificate. If it is your Bob, forget him here and pair again."
+            : "Can't reach ${profile?.name ?? 'Bob'}";
+      }
     } finally {
       _polling = false;
+    }
+    if (stale) {
+      // The identity changed while this request ran. Show the new state; if the
+      // new connection's first poll was skipped by the one-flight guard, run it
+      // now. Only a real switch needs this, not every stale finish.
+      notifyListeners();
+      if (session != _session && client != null) unawaited(poll());
+      return;
     }
     if (_failures >= 4) unawaited(_maybeRediscover());
     notifyListeners();
@@ -117,6 +143,7 @@ class AppState extends ChangeNotifier {
   /// matches the one we are paired with, follow him there.
   Future<void> _maybeRediscover() async {
     final p = profile;
+    final session = _session;
     if (p == null ||
         DateTime.now().difference(_lastRediscovery) <
             const Duration(seconds: 30)) {
@@ -124,14 +151,27 @@ class AppState extends ChangeNotifier {
     }
     _lastRediscovery = DateTime.now();
     final d = BobDiscovery();
-    await d.start();
-    await Future<void>.delayed(const Duration(seconds: 4));
-    final match = d.current.where(
-      (b) =>
-          b.fingerprintPrefix != null &&
-          p.fingerprint.startsWith(b.fingerprintPrefix!),
-    );
-    await d.stop();
+    Iterable<FoundBob> match = const [];
+    try {
+      await d.start();
+      await Future<void>.delayed(const Duration(seconds: 4));
+      match = d.current
+          .where(
+            (b) =>
+                b.fingerprintPrefix != null &&
+                p.fingerprint.startsWith(b.fingerprintPrefix!),
+          )
+          .toList();
+    } catch (_) {
+      // No multicast permission, a socket that will not bind...: just try again later.
+    } finally {
+      try {
+        await d.stop();
+      } catch (_) {}
+    }
+    // The user may have unpaired or selected another Bob while discovery was
+    // listening. Never resurrect or overwrite that newer choice.
+    if (session != _session || !identical(profile, p)) return;
     if (match.isNotEmpty &&
         (match.first.host != p.host || match.first.port != p.port)) {
       await setProfile(
@@ -237,8 +277,7 @@ class AppState extends ChangeNotifier {
     if (events.isNotEmpty) {
       return [
         for (final e in events.reversed.take(4))
-          '${(e['t'] ?? '').toString().padRight(19).substring(11, 16).trim()} ${e['kind']} ${e['text'] ?? ''}'
-              .trim(),
+          '${eventClock(e['t'])} ${e['kind']} ${e['text'] ?? ''}'.trim(),
       ];
     }
     const kinds = {'MOVE', 'BOB', 'SAY', 'HEARD', 'RADIO', 'YOU'};
@@ -263,4 +302,17 @@ class AppState extends ChangeNotifier {
     client?.close();
     super.dispose();
   }
+}
+
+/// The clock part of an event timestamp such as "2026-10-25 14:03:09": HH:MM, or HH:MM:SS with [seconds].
+/// Anything that is not a date followed by a time is returned unchanged.
+String eventClock(Object? raw, {bool seconds = false}) {
+  final value = (raw ?? '').toString();
+  final m = RegExp(
+    r'^\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2})(:\d{2})?',
+  ).firstMatch(value);
+  if (m == null) return value;
+  return seconds && m.group(2) != null
+      ? '${m.group(1)}${m.group(2)}'
+      : m.group(1)!;
 }

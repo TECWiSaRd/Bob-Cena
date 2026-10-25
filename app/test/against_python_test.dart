@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bob_app/src/client.dart';
+import 'package:bob_app/src/profile.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class PyServer {
@@ -172,6 +173,23 @@ void main() {
       }
     },
   );
+
+  test('a saved profile with no usable fingerprint trusts nothing', () async {
+    final c = BobClient.fromProfile(
+      BobProfile(
+        name: 'Bob',
+        host: '127.0.0.1',
+        port: a.port,
+        fingerprint: '',
+        token: 't',
+        device: 'x',
+      ),
+    );
+    await expectLater(c.status(), throwsA(anything));
+    expect(c.certificateRejected, isTrue);
+    expect(c.seenFingerprint, isNull);
+    c.close();
+  });
 
   test(
     'a man in the middle cannot pair: a proof made for another certificate fails',

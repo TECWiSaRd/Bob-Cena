@@ -155,12 +155,43 @@ class _DriveTabState extends State<DriveTab> {
   Timer? _timer;
   final Set<LogicalKeyboardKey> _keys = {};
   final _focus = FocusNode();
+  AppState? _appState;
+  bool _moving = false; // the last thing we told Bob was to move
+  bool _drove = false; // this tab has sent a move since the last explicit stop
+  int _stickEpoch = 0; // bumping it rebuilds the stick back at the centre
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Keep this while the element is active; Provider lookups are not allowed
+    // from dispose.
+    _appState = context.read<AppState>();
+  }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _stopDriving();
     _focus.dispose();
     super.dispose();
+  }
+
+  /// Stop locally first, so this tab's own timer cannot send another move after the stop. (A move request already on
+  /// its way can still arrive late, which is why an explicit stop is sent again even after the stick was released;
+  /// Bob's emergency stop is what guarantees the wheels stay off.) Bob is only told when this tab has driven, so
+  /// leaving a tab that never drove does not interrupt someone else's manual drive. Redraw only from an event
+  /// handler, never from dispose or the focus machinery.
+  void _stopDriving({bool redraw = false}) {
+    _x = 0;
+    _y = 0;
+    _keys.clear();
+    _timer?.cancel();
+    _timer = null;
+    final was = _drove;
+    _moving = false;
+    _drove = false;
+    final state = _appState;
+    if (was && state != null) unawaited(state.drive(0, 0));
+    if (redraw && mounted) setState(() => _stickEpoch++);
   }
 
   void _setStick(double x, double y) {
@@ -175,9 +206,12 @@ class _DriveTabState extends State<DriveTab> {
     if (l == 0 && r == 0) {
       _timer?.cancel();
       _timer = null;
-      s.drive(0, 0);
+      if (_moving) s.drive(0, 0);
+      _moving = false;
       return;
     }
+    _moving = true;
+    _drove = true;
     s.drive(l, r);
     _timer ??= Timer.periodic(const Duration(milliseconds: 250), (_) {
       final (l2, r2) = mixWheels(_x, _y, scale: _slow ? 0.5 : 1.0);
@@ -190,7 +224,7 @@ class _DriveTabState extends State<DriveTab> {
     final k = event.logicalKey;
     if (event is KeyDownEvent && k == LogicalKeyboardKey.space) {
       final s = context.read<AppState>();
-      s.drive(0, 0);
+      _stopDriving(redraw: true);
       unawaited(s.send('/estop'));
       return KeyEventResult.handled;
     }
@@ -238,12 +272,19 @@ class _DriveTabState extends State<DriveTab> {
       focusNode: _focus,
       autofocus: true,
       onKeyEvent: _onKey,
+      onFocusChange: (hasFocus) {
+        // Keys held down can't be released once the window loses the keyboard. The stick is a gesture and is
+        // unaffected by focus, so tapping another control mid-drag must not stop it.
+        if (!hasFocus && _keys.isNotEmpty) _stopDriving();
+      },
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom),
         children: [
           if (client != null) MjpegView(key: ValueKey(client), client: client),
           const SizedBox(height: 12),
-          Center(child: Joystick(onChanged: _setStick)),
+          Center(
+            child: Joystick(key: ValueKey(_stickEpoch), onChanged: _setStick),
+          ),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -281,8 +322,10 @@ class StatusTab extends StatelessWidget {
     if (st.isEmpty) return const Center(child: Text('No status yet'));
     final usage = (st['usage'] as Map?) ?? const {};
     final vitals = (st['vitals'] as Map?) ?? const {};
-    final events = ((st['events'] as List?) ?? const []).cast<Map>();
-    final throttled = (vitals['throttled'] as int?) ?? 0;
+    final events = ((st['events'] as List?) ?? const [])
+        .whereType<Map>()
+        .toList();
+    final throttled = statusNumber(vitals['throttled'])?.toInt() ?? 0;
     final scheme = Theme.of(context).colorScheme;
     String money(Object? v) => v is num ? '\$${v.toStringAsFixed(2)}' : '-';
 
@@ -322,10 +365,10 @@ class StatusTab extends StatelessWidget {
                 const StatChip('following', color: Colors.green),
               if ((st['radio'] ?? '').toString().isNotEmpty)
                 StatChip('radio ${st['radio']}'),
-              if (st['dist'] != null)
+              if (statusNumber(st['dist']) case final dist?)
                 StatChip(
-                  '${st['dist']} cm ahead',
-                  color: (st['dist'] as num) < 20 ? scheme.error : null,
+                  '${dist.round()} cm ahead',
+                  color: dist < 20 ? scheme.error : null,
                 ),
               if (st['room'] != null) StatChip('in the ${st['room']}'),
               StatChip('${st['model']} / ${st['effort']}'),
@@ -349,23 +392,21 @@ class StatusTab extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (vitals['temp_c'] != null)
+              if (statusNumber(vitals['temp_c']) case final temp?)
                 StatChip(
-                  '${(vitals['temp_c'] as num).round()} °C',
-                  color: (vitals['temp_c'] as num) >= 80
+                  '${temp.round()} °C',
+                  color: temp >= 80
                       ? scheme.error
-                      : (vitals['temp_c'] as num) >= 70
+                      : temp >= 70
                       ? scheme.tertiary
                       : null,
                 ),
-              if (vitals['load'] != null)
-                StatChip('load ${(vitals['load'] as num).toStringAsFixed(1)}'),
-              if (vitals['mem_mb'] != null)
-                StatChip('${vitals['mem_mb']} MB free'),
-              if (vitals['disk_gb'] != null)
-                StatChip(
-                  '${(vitals['disk_gb'] as num).toStringAsFixed(1)} GB disk',
-                ),
+              if (statusNumber(vitals['load']) case final load?)
+                StatChip('load ${load.toStringAsFixed(1)}'),
+              if (statusNumber(vitals['mem_mb']) case final mem?)
+                StatChip('${mem.round()} MB free'),
+              if (statusNumber(vitals['disk_gb']) case final disk?)
+                StatChip('${disk.toStringAsFixed(1)} GB disk'),
               if (throttled & 5 != 0)
                 StatChip('power or heat limit', color: scheme.error),
               if (vitals.isEmpty) const Text('No readings'),
@@ -383,7 +424,7 @@ class StatusTab extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Text(
-                  '${(e['t'] ?? '').toString().padRight(19).substring(11, 19)}  ${e['kind']}  ${e['text']}',
+                  '${eventClock(e['t'], seconds: true)}  ${e['kind']}  ${e['text']}',
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
                 ),
               ),
@@ -391,6 +432,12 @@ class StatusTab extends StatelessWidget {
       ],
     );
   }
+}
+
+/// A finite number from the status JSON (a number or a numeric string), or null.
+num? statusNumber(Object? value) {
+  final n = value is num ? value : num.tryParse(value?.toString() ?? '');
+  return n != null && n.isFinite ? n : null;
 }
 
 // =====================================================================================================================

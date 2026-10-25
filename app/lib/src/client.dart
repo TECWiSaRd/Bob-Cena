@@ -29,6 +29,7 @@ class BobClient {
     required this.port,
     this.pinnedFingerprint,
     this.token,
+    this.trustOnFirstUse = true,
   });
 
   factory BobClient.fromProfile(BobProfile p) => BobClient(
@@ -36,12 +37,17 @@ class BobClient {
     port: p.port,
     pinnedFingerprint: p.fingerprint,
     token: p.token,
+    trustOnFirstUse: false,
   );
 
   final String host;
   final int port;
   final String? pinnedFingerprint;
   final String? token;
+
+  /// True only for a client that is pairing: it has no pin yet and takes the first certificate it sees. A client made
+  /// from a saved profile never does, even if its saved fingerprint were empty.
+  final bool trustOnFirstUse;
 
   /// The fingerprint of the certificate seen on the first connection (used while pairing).
   String? seenFingerprint;
@@ -51,11 +57,23 @@ class BobClient {
   final List<HttpClient> _streamClients = [];
 
   HttpClient _makeHttp() {
-    final c = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    // Deliberately start with an empty trust store. This makes the callback
+    // below run for every server certificate, including one that happens to
+    // chain to a system CA. Bob's fingerprint is the trust decision.
+    final c = HttpClient(context: SecurityContext(withTrustedRoots: false))
+      ..connectionTimeout = const Duration(seconds: 6);
     c.badCertificateCallback = (X509Certificate cert, String h, int p) {
       final fp = sha256.convert(cert.der).toString();
-      final expected = pinnedFingerprint ?? seenFingerprint;
+      // Only a client with no pin at all is pairing for the first time and may take the certificate it sees (the pairing
+      // code's proof is bound to it, so a wrong one fails there). A client built from a saved profile always has a pin and
+      // never falls back to trusting what it is shown.
+      final pin = (pinnedFingerprint ?? '').isEmpty ? null : pinnedFingerprint;
+      final expected = pin ?? seenFingerprint;
       if (expected == null) {
+        if (!trustOnFirstUse) {
+          certificateRejected = true;
+          return false;
+        }
         seenFingerprint = fp;
         return true;
       }
