@@ -35,7 +35,11 @@ fov_deg = 62.0             # camera's horizontal field of view (used by followin
 rotate_180 = false         # set true if the camera is mounted upside down
 
 [sensor]
-enabled = false            # HC-SR04 distance sensor; wiring in the README (ECHO needs a voltage divider)
+enabled = false            # the obstacle reflex; needs a sensor below. Wiring: manual 09 (the HC-SR04's ECHO needs a voltage divider)
+ultrasonic = true          # use the HC-SR04 ultrasonic sensor
+tof = false                # use a VL53L1X laser sensor on I2C (pip install vl53l1x; I2C switched on). With both, the nearer reading wins
+tof_bus = 1
+tof_address = 0x29
 trigger_pin = 23
 echo_pin = 24
 stop_cm = 15               # forward moves are refused / cut off inside this distance

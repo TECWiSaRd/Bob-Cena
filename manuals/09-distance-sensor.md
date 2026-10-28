@@ -4,8 +4,8 @@ An ultrasonic distance sensor gives Bob a reflex: the wheels refuse to drive int
 him, **whatever Claude decided**. It works like a bat: it sends out a click too high to hear and times the
 echo.
 
-> **Status:** optional, and **not fitted yet** (it's waiting for resistors). The code was tested with a
-> simulated sensor. Bob works normally without it.
+> **Status:** optional. The ultrasonic sensor and the laser sensor are both **tested only with simulated
+> sensors so far**; neither has been confirmed on a real Bob. Bob works normally without them.
 
 ---
 
@@ -55,6 +55,39 @@ local electronics shop. Starter kits often include some.
 **Mounting:** at the front, facing straight ahead, at least a few centimetres above the floor, so it
 doesn't see the floor itself.
 
+## The laser sensor (VL53L1X), optional
+
+A small laser distance sensor on the Pi's I2C pins. It reads soft things (sofas, clothes, pets) and angled
+walls that ultrasonic misses, and it needs **no resistors**. It can miss glass and mirrors, and bright sunlight
+confuses it, which is why using it **together** with the ultrasonic sensor is a good idea: each one covers the
+other's weak spot, and **the nearer reading always wins**. Range is about 4 cm to 4 m.
+
+| Sensor pin | Connect to |
+|---|---|
+| VIN | Pi 3.3 V (pin 1) |
+| GND | ground (pin 6) |
+| SDA | GPIO2 (pin 3) |
+| SCL | GPIO3 (pin 5) |
+
+1. Switch I2C on once: `sudo raspi-config`, Interface Options, I2C, Yes, then reboot.
+2. Install its library: `.venv/bin/pip install vl53l1x` (from Bob's folder on the Pi).
+3. Check the Pi sees it: `sudo apt install -y i2c-tools && i2cdetect -y 1`. A `29` should appear in the table.
+4. In `config.local.toml`:
+   ```toml
+   [sensor]
+   enabled = true
+   tof = true
+   ultrasonic = true      # false if you only have the laser
+   ```
+5. Restart Bob. The log says `Laser sensor ready (I2C bus 1, address 0x29)`. If something is wrong it says
+   `Laser sensor unavailable (...)` and the ultrasonic sensor keeps working on its own.
+
+`/range` then shows the nearer reading with both in brackets, like `ahead 42 cm [ultrasonic 42, laser 45]`.
+If a sensor gives no reading for a moment, the other one is used. If a laser reading is older than about half a
+second it is ignored, so a stuck sensor can't leave an old number in charge.
+
+**Test it the same way:** hold your hand 10 cm in front and `/range`. The reading must change.
+
 ## Switching it on
 
 1. Wire it up with the Pi off.
@@ -81,7 +114,11 @@ Under `[sensor]`:
 
 | Setting | Default | What it does |
 |---|---|---|
-| `enabled` | false | switch the sensor on |
+| `enabled` | false | switch the obstacle reflex on (needs at least one sensor below) |
+| `ultrasonic` | true | use the HC-SR04 |
+| `tof` | false | use a VL53L1X laser sensor (see above) |
+| `tof_bus` | 1 | the Pi's I2C bus number |
+| `tof_address` | 0x29 | the laser sensor's address |
 | `trigger_pin` | 23 | the GPIO for TRIG |
 | `echo_pin` | 24 | the GPIO for ECHO (through the resistor divider) |
 | `stop_cm` | 15 | forward moves are refused or stopped inside this distance |
@@ -92,7 +129,9 @@ Under `[sensor]`:
 | Problem | Fix |
 |---|---|
 | Always reads "clear", even with your hand in front | check the wiring, especially ECHO through the divider and the shared ground |
-| `Distance sensor unavailable` in the log | the pins are in use or wrong, or GPIO isn't available |
+| `Laser sensor unavailable` in the log | I2C isn't switched on, `vl53l1x` isn't installed, or a wire is loose (`i2cdetect -y 1` should show `29`) |
+| `no reading right now` | the sensor is working but has nothing in range or its last reading was rejected; the other sensor, if any, is still used |
+| `Ultrasonic sensor unavailable` in the log | the pins are in use or wrong, or GPIO isn't available |
 | Readings jump around | normal on soft or angled surfaces; mount it facing straight ahead |
 | He stops too early or too late | adjust `stop_cm` |
 | He won't drive forward at all | something is within `stop_cm`, or the sensor sees the floor: angle it up slightly |

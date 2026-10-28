@@ -26,6 +26,9 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 
+echo "== Laser distance sensor library (only needed if you fit a VL53L1X; manual 09)"
+.venv/bin/pip install vl53l1x || echo "(vl53l1x not installed; fine unless you use the laser sensor)"
+
 echo "== Speech recognition (faster-whisper, for the USB microphone)"
 # Best effort: Bob works without it; /listen on will say what is missing.
 if .venv/bin/pip install faster-whisper \

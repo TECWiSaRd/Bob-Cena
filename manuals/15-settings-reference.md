@@ -88,7 +88,11 @@ See [Distance sensor](09-distance-sensor.md).
 
 | Setting | Default | What it does |
 |---|---|---|
-| `enabled` | false | switch the HC-SR04 on |
+| `enabled` | false | switch the obstacle reflex on (needs a sensor below) |
+| `ultrasonic` | true | use the HC-SR04 |
+| `tof` | false | use a VL53L1X laser sensor on I2C (the nearer reading wins) |
+| `tof_bus` | 1 | the Pi's I2C bus |
+| `tof_address` | 0x29 | the laser sensor's I2C address |
 | `trigger_pin` | 23 | GPIO for TRIG |
 | `echo_pin` | 24 | GPIO for ECHO (through a voltage divider!) |
 | `stop_cm` | 15 | forward moves are refused or stopped inside this distance. Live: `/range stop` |

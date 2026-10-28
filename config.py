@@ -60,7 +60,11 @@ class StreamConfig:
 
 @dataclass
 class SensorConfig:
-    enabled: bool = False        # HC-SR04 ultrasonic sensor facing forward (see sensors.py for wiring)
+    enabled: bool = False        # the obstacle reflex: needs at least one of the sensors below (see sensors.py for wiring)
+    ultrasonic: bool = True      # the HC-SR04 ultrasonic sensor
+    tof: bool = False            # a VL53L1X laser sensor on I2C (needs: pip install vl53l1x, and I2C switched on)
+    tof_bus: int = 1             # the Pi's I2C bus number
+    tof_address: int = 0x29      # the VL53L1X's usual address
     trigger_pin: int = 23
     echo_pin: int = 24           # through a 1k/2k voltage divider: the sensor's ECHO is 5 V!
     stop_cm: int = 15            # the wheels refuse to go forward when something is closer than this
