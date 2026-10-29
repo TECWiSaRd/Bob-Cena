@@ -1,0 +1,44 @@
+# Keeps the GitHub wiki in step with the manuals/ folder. Edit the manuals; never edit the wiki by hand (it is overwritten).
+#
+# One-time setup: GitHub only creates a wiki's storage when its first page exists. On the repository's Wiki tab, click
+# "Create the first page", save anything, and then run this workflow (Actions tab, "Publish the wiki", Run workflow).
+name: Publish the wiki
+
+on:
+  push:
+    branches: [main]
+    paths: ["manuals/**", "tools/make_wiki.py", ".github/workflows/wiki.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the pages
+        run: python tools/make_wiki.py wiki-out
+      - name: Push them to the wiki
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          if ! git clone "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.wiki.git" wiki 2>/dev/null; then
+            echo "::error::The wiki doesn't exist yet. On the repository's Wiki tab, create the first page (any text), then run this workflow again."
+            exit 1
+          fi
+          cd wiki
+          find . -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +
+          cp ../wiki-out/*.md .
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The wiki is already up to date."
+          else
+            git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
+              commit -q -m "Update the wiki from manuals/ (${GITHUB_SHA::7})"
+            git push -q
+          fi
