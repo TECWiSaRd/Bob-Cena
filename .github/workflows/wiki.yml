@@ -1,17 +1,25 @@
-# Keeps the GitHub wiki in step with the manuals/ folder. Edit the manuals; never edit the wiki by hand (it is overwritten).
+# Keeps the GitHub wiki in step with the manuals/ folder. Edit the manuals; never edit the wiki's generated pages by hand
+# (they are overwritten). Other files you upload to the wiki, such as images, are left alone.
 #
 # One-time setup: GitHub only creates a wiki's storage when its first page exists. On the repository's Wiki tab, click
 # "Create the first page", save anything, and then run this workflow (Actions tab, "Publish the wiki", Run workflow).
 name: Publish the wiki
 
 on:
+  # Every push to main, not only changes under manuals/: the manuals can link to any file in the repository, and the build
+  # stops on a dead link, so renaming or deleting a linked file is caught right away. A run takes seconds, and it does
+  # nothing when the pages haven't changed.
   push:
     branches: [main]
-    paths: ["manuals/**", "tools/make_wiki.py", ".github/workflows/wiki.yml"]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# Two quick pushes must not race for the wiki: the later one waits, and the newest content wins.
+concurrency:
+  group: wiki
+  cancel-in-progress: false
 
 jobs:
   wiki:
@@ -26,19 +34,50 @@ jobs:
       - name: Push them to the wiki
         env:
           TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          if ! git clone "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.wiki.git" wiki 2>/dev/null; then
-            echo "::error::The wiki doesn't exist yet. On the repository's Wiki tab, create the first page (any text), then run this workflow again."
+          # The token goes in a header for these commands only, not into the clone's saved settings.
+          AUTH="Authorization: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          WIKI="https://github.com/${REPO}.wiki.git"
+          if ! git -c "http.extraheader=${AUTH}" clone "$WIKI" wiki 2> clone.log; then
+            cat clone.log
+            if grep -qiE "not found|does not exist" clone.log; then
+              echo "::error::The wiki doesn't exist yet. On the repository's Wiki tab, create the first page (any text), then run this workflow again."
+            else
+              echo "::error::Could not clone the wiki (see the log above): a network problem, or the token can't write to the wiki."
+            fi
             exit 1
           fi
           cd wiki
-          find . -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +
-          cp ../wiki-out/*.md .
-          git add -A
-          if git diff --cached --quiet; then
-            echo "The wiki is already up to date."
-          else
+          MANIFEST=.generated-pages      # which pages this workflow wrote last time; pages made by hand are never touched
+          GIT=(git -c "http.extraheader=${AUTH}")
+
+          apply() {
+            if [ -f "$MANIFEST" ]; then
+              while IFS= read -r f; do [ -n "$f" ] && rm -f -- "$f"; done < "$MANIFEST"
+            fi
+            cp ../wiki-out/*.md .
+            (cd ../wiki-out && ls -1 *.md) > "$MANIFEST"
+            git add -A
+          }
+
+          for attempt in 1 2 3; do
+            apply
+            if git diff --cached --quiet; then
+              echo "The wiki is already up to date."
+              exit 0
+            fi
             git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
               commit -q -m "Update the wiki from manuals/ (${GITHUB_SHA::7})"
-            git push -q
-          fi
+            if "${GIT[@]}" push -q; then
+              echo "Pushed."
+              exit 0
+            fi
+            # Rejected: someone changed the wiki meanwhile. Start again from what is there now and redo the update,
+            # rather than rebasing a commit that rewrites the same files.
+            echo "Push was rejected (attempt ${attempt}); starting again from the latest wiki."
+            "${GIT[@]}" fetch -q origin
+            git reset -q --hard "@{u}"
+          done
+          echo "::error::Could not push to the wiki after 3 tries."
+          exit 1

@@ -202,7 +202,9 @@ class _DriveTabState extends State<DriveTab> {
   }
 
   void _drive() {
-    final s = context.read<AppState>();
+    // The cached state, not context: the stick can report its final stop while this page is being taken apart.
+    final s = _appState;
+    if (s == null) return;
     final (l, r) = mixWheels(_x, _y, scale: _slow ? 0.5 : 1.0);
     if (l == 0 && r == 0) {
       _timer?.cancel();

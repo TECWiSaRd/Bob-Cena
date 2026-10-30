@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'client.dart';
@@ -107,57 +108,107 @@ class Joystick extends StatefulWidget {
 
 class _JoystickState extends State<Joystick> {
   Offset _knob = Offset.zero; // -1..1 in both directions
+  int? _pointer; // the finger that owns the stick; others are ignored
+  bool _stopped = true; // the last thing reported was (0, 0)
+
+  void _report(double x, double y) {
+    final stop = x == 0 && y == 0;
+    if (stop && _stopped) {
+      return; // a resting thumb must not repeat "stop" on every tiny move
+    }
+    _stopped = stop;
+    widget.onChanged(x, y);
+  }
 
   void _update(Offset local) {
     final r = widget.size / 2;
     var v = (local - Offset(r, r)) / r;
     if (v.distance > 1) v = v / v.distance;
     setState(() => _knob = v);
-    widget.onChanged(v.dx, -v.dy);
+    // A small circle in the middle counts as centred, so a resting thumb doesn't creep.
+    final still = v.distance < 0.08;
+    _report(still ? 0 : v.dx, still ? 0 : -v.dy);
   }
 
   void _release() {
+    _pointer = null;
     setState(() => _knob = Offset.zero);
-    widget.onChanged(0, 0);
+    _report(0, 0);
+  }
+
+  @override
+  void dispose() {
+    // If the stick leaves the screen with a finger on it (a disconnect, a mode change, a page change), no pointer-up
+    // will ever arrive, so the last drive command would stay in force. Say stop.
+    if (_pointer != null) widget.onChanged(0, 0);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final r = widget.size / 2;
-    return SizedBox(
-      width: widget.size,
-      height: widget.size,
-      child: GestureDetector(
-        onPanStart: (d) => _update(d.localPosition),
-        onPanUpdate: (d) => _update(d.localPosition),
-        onPanEnd: (_) => _release(),
-        onPanCancel: _release,
-        child: Stack(
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: scheme.surface,
-                border: Border.all(
-                  color: scheme.onSurface.withValues(alpha: 0.12),
-                  width: 2,
-                ),
+    // Raw touches, not a pan gesture: a pan only starts after the finger has moved a little, and a stick inside a
+    // scrolling page loses forward and backward drags to the page. The eager recognizer claims the touch at once so
+    // the page can't scroll while the stick is held; the listener then reads the finger from the first instant.
+    // ClipOval makes only the round pad touchable; the square's corners are ignored (and don't block scrolling).
+    return ClipOval(
+      clipBehavior: Clip.none,
+      child: RawGestureDetector(
+        behavior: HitTestBehavior.opaque,
+        gestures: {
+          EagerGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<EagerGestureRecognizer>(
+                EagerGestureRecognizer.new,
+                (_) {},
               ),
-            ),
-            Positioned(
-              left: r + _knob.dx * r * 0.7 - 32,
-              top: r + _knob.dy * r * 0.7 - 32,
-              child: Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: scheme.primary.withValues(alpha: 0.9),
+        },
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (e) {
+            if (_pointer != null) return;
+            _pointer = e.pointer;
+            _update(e.localPosition);
+          },
+          onPointerMove: (e) {
+            if (e.pointer == _pointer) _update(e.localPosition);
+          },
+          onPointerUp: (e) {
+            if (e.pointer == _pointer) _release();
+          },
+          onPointerCancel: (e) {
+            if (e.pointer == _pointer) _release();
+          },
+          child: SizedBox(
+            width: widget.size,
+            height: widget.size,
+            child: Stack(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: scheme.surface,
+                    border: Border.all(
+                      color: scheme.onSurface.withValues(alpha: 0.12),
+                      width: 2,
+                    ),
+                  ),
                 ),
-              ),
+                Positioned(
+                  left: r + _knob.dx * r * 0.7 - 32,
+                  top: r + _knob.dy * r * 0.7 - 32,
+                  child: Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: scheme.primary.withValues(alpha: 0.9),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
