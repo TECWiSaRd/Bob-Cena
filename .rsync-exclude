@@ -15,6 +15,7 @@ __pycache__
 /.env
 /memory.json
 /people.json
+/faces.json
 /tuning.json
 /usage.json
 /devices.json

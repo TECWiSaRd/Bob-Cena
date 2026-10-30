@@ -184,6 +184,15 @@ heartbeat_every_s = 60.0
 cooldown_s = 300.0         # least time between two notifications of the same kind
 notify = ["restart", "estop", "camera", "power", "update", "vitals"]   # also: "start", "stopped"
 
+[faces]
+enabled = false            # recognise people who asked to be remembered: /face remember NAME (manual 26). Numbers only, no photos
+match_threshold = 0.40
+margin = 0.05
+samples_to_take = 5
+confirm_seconds = 30.0
+max_people = 20
+max_samples = 8
+
 [sleep]
 enabled = false            # follow the schedule below (/sleep on|off works either way; manual 24)
 start = "23:00"

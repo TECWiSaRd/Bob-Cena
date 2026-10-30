@@ -34,6 +34,7 @@ from music import MusicSystem
 from radio import Radio
 from sensors import RangeSensor
 from calibrate import Calibrator
+from faces import FaceBook, FaceService, SFaceBackend
 from vision import FaceDetector, Follower
 from access import AccessPolicy
 from stream import StreamServer
@@ -66,6 +67,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /version              which code this is (and whether it is a git checkout)
   /update               owner only: show what is new on GitHub; /update confirm installs it and restarts Bob
   /pair                 a one-time code to add a phone or computer to the Bob app; /devices lists and removes them (manual 23)
+  /face                 who Bob recognises (off by default): /face remember NAME, /face improve NAME, /face forget NAME|all, /face on|off (manual 26)
   /usage                what Claude has cost, all time (today, 7 days, month, per model)
   /resume               start autonomous AI ticks again (/think on|off also works)
   /model opus|sonnet|haiku   switch Claude model live (haiku is ~40x cheaper than opus)
@@ -222,7 +224,9 @@ class Controller:
         self.controls.speed_cap = lambda: self.drive.speed_cap
         self.memory = Memory(BASE / "memory.json")
         self.people = People(BASE / "people.json")
-        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home, sleep_cfg=cfg.sleep)
+        self.faces = FaceService(cfg.faces, FaceBook(BASE / "faces.json", cfg.faces.max_people, cfg.faces.max_samples),
+                                 lambda: SFaceBackend(BASE / "models"))
+        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home, sleep_cfg=cfg.sleep, faces=self.faces)
         self.brain.timeline = self.timeline
 
     def _make_radio(self, rc):
@@ -413,6 +417,38 @@ class Controller:
 
         threading.Thread(target=look, name="update-look", daemon=True).start()
         return "looking on GitHub... (the answer appears in the log)"
+
+    def face_command(self, arg: str, by: str | None, role: str) -> str:
+        if role not in ("owner", "operator"):
+            return "only the owner or an operator can use /face"
+        words = arg.split(None, 1)
+        sub = words[0].lower() if words else ""
+        rest = words[1].strip() if len(words) > 1 else ""
+        who = by or "console"
+        faces = self.faces
+        if sub in ("", "list", "status"):
+            return faces.describe()
+        if sub in ("on", "off"):
+            faces.enabled = sub == "on"
+            if faces.enabled and not faces.available:
+                return f"face recognition is on but can't work: {faces.problem}"
+            return f"face recognition {'on' if faces.enabled else 'off'} (until Bob restarts; [faces] enabled in config.local.toml makes it permanent)"
+        if not faces.enabled:
+            return "face recognition is off: /face on (or [faces] enabled = true in config.local.toml)"
+        if sub == "remember":
+            lowered = rest.lower()
+            if lowered == "confirm":
+                return faces.confirm_remember(who, lambda: self.camera.grab_bgr(), by)
+            if lowered == "cancel":
+                return faces.cancel_remember(who)
+            return faces.request_remember(who, rest)
+        if sub == "improve":
+            return faces.improve(rest, by) if rest else "usage: /face improve <name> (stand in front of Bob first)"
+        if sub == "forget":
+            if rest.lower() == "all":
+                return faces.forget_all()
+            return faces.forget(rest) if rest else "usage: /face forget <name> | all"
+        return "usage: /face [remember NAME | remember confirm | improve NAME | forget NAME|all | on | off]"
 
     def pair_command(self, by: str | None, role: str) -> str:
         """/pair: a one-time code for adding a phone or computer to the Bob app."""
@@ -851,6 +887,8 @@ class Controller:
                 return describe_version(BASE)
             case "update":
                 return self.update_command(arg.lower().split(), by, role)
+            case "face" | "faces":
+                return self.face_command(arg, by, role)
             case "usage" | "cost":
                 return self.controls.usage.report(c.cost)
             case "think":

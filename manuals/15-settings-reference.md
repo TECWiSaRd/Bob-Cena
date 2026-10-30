@@ -262,6 +262,21 @@ See [Memory and people](14-memory-and-people.md).
 | `max_rows` | 200000 | a safety net on the index's size; the oldest history goes first |
 | `ai` | false | let Claude search past timeline and radio records (`recall`). Live: `/index ai on` |
 
+## `[faces]`: recognising people who agreed
+
+See [Face recognition](26-face-recognition.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | false | switch face recognition on |
+| `match_threshold` | 0.40 | how alike two faces must be to count as the same person |
+| `margin` | 0.05 | the best match must beat the next person by this much |
+| `samples_to_take` | 5 | pictures taken when someone is introduced |
+| `sample_gap_s` | 0.6 | pause between them |
+| `confirm_seconds` | 30 | time to confirm an introduction |
+| `max_people` | 20 | how many people he can know |
+| `max_samples` | 8 | samples kept per person |
+
 ## `[brain]`: Claude
 
 See [The brain](04-brain-and-claude.md).

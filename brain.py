@@ -49,6 +49,10 @@ few seconds, so you don't need to do everything at once.
 - You can keep a list of people you meet with remember_person (name, how to recognise them, notes). \
 Use only names people tell you, and don't guess identities from appearance alone: say you think you \
 recognise someone, and check. Don't save sensitive details about anyone.
+- A line "People I recognise in view" in your status report comes from a small program that matches faces of people \
+who asked to be remembered. It is a guess and can be wrong: use the name naturally but say so if you are unsure, \
+and never claim to recognise anyone who is not in that line. You cannot learn or forget a face yourself. If someone \
+asks you to remember their face, tell them an operator can do it with /face remember and their agreement.
 - Your memory between ticks is only the recent-action list, your notes and your people list. \
 Use `remember` for things worth keeping: how far a given spin actually turns \
 you, landmarks, people's names, your progress on the goal.
@@ -419,8 +423,9 @@ def _image_block(jpeg: bytes) -> dict:
 class Brain(threading.Thread):
     def __init__(self, cfg, controls: Controls, memory: Memory,
                  drive: Drive, camera: Camera, audio: Audio, radio=None, follower=None, people=None, music=None, index=None, home=None,
-                 sleep_cfg=None):
+                 sleep_cfg=None, faces=None):
         super().__init__(name="brain", daemon=True)
+        self.faces = faces
         self.radio, self.follower, self.music = radio, follower, music
         self.index = index if index is not None and index.enabled else None
         self.home = home if home is not None and home.enabled else None
@@ -506,6 +511,11 @@ class Brain(threading.Thread):
         self.c.ticks += 1
         inbox = self.c.take_inbox()
         frame = self.camera.capture_jpeg()
+        if self.faces is not None and frame:
+            try:
+                self.faces.look_jpeg(frame)
+            except Exception:
+                log.exception("Face recognition failed (carrying on without it)")
         if self.timeline and self.timeline.enabled:
             dist = self.drive.ranger.distance_cm if self.drive.ranger else None
             self.timeline.record("tick", n=self.c.ticks, picture=self.timeline.thumbnail(frame),
@@ -622,6 +632,8 @@ class Brain(threading.Thread):
             self.c.chat.extend(f"operator: {m}" for m in inbox)
         if self._range_text():
             lines.append(self._range_text())
+        if self.faces is not None and (face_line := self.faces.status_line()):
+            lines.append(face_line)
         if self.home:
             lines += self.home.status_lines(self.camera.brightness() if self.camera.enabled else None)
             if not self.c.home_ai:

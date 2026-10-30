@@ -65,6 +65,19 @@ if [ ! -f "$YUNET" ]; then
     fi
 fi
 
+echo "== Face recognition model (only used if you switch faces on; manual 26)"
+SFACE=models/face_recognition_sface_2021dec.onnx
+SFACE_SHA=0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79
+if [ ! -f "$SFACE" ]; then
+    if curl -fsSL -o "$SFACE.tmp" "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx" \
+       && echo "$SFACE_SHA  $SFACE.tmp" | sha256sum -c --quiet -; then
+        mv "$SFACE.tmp" "$SFACE" && echo "SFace model ready"
+    else
+        rm -f "$SFACE.tmp"
+        echo "!! face recognition model download failed - /face will say so; the rest of Bob is unaffected"
+    fi
+fi
+
 echo "== Piper (offline natural voice)"
 # Best effort: if this fails Bob speaks with espeak-ng instead.
 if .venv/bin/pip install piper-tts \

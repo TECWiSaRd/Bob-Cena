@@ -20,6 +20,9 @@ Mac and Android).
 `version.py`'s `__version__`; a test checks pubspec) and opens the download in the browser. It does not self-install (macOS sandbox; Android
 CI builds use a throw-away debug key, so a stable release key is still needed for in-place updates).
 
+**Wiki:** the GitHub wiki is generated from `manuals/` by `tools/make_wiki.py` (published by `.github/workflows/wiki.yml` on every push to
+main). Edit the manuals, never the generated wiki pages; hand-made wiki pages and uploads are left alone. A dead link in a manual stops the build.
+
 ## Rules that matter most
 
 1. **Safety limits live in code, never in prompts.** Claude can ask for anything; `hardware.Drive` and the overrides decide. Overrides
@@ -53,6 +56,7 @@ Python (top level, stdlib + `anthropic`; hardware libs come from apt on the Pi a
 | `access.py` | per-person Wi-Fi-scoped tokens (`TOKEN_NAME`, `WIFI[ssid]=NAME`), lockout |
 | `remote.py` / `console.py` | shared console over a unix socket (SO_PEERCRED + groups `bobops`/`bobview`); curses UI; stderr capture |
 | `power.py` / `update.py` / `version.py` | two-step `/shutdown`; `/update` from GitHub (git checkout, rollback); code fingerprints |
+| `faces.py` | opt-in face recognition (SFace via OpenCV): embeddings only in `faces.json`, two-step `/face remember`, `/face improve`, no Claude tool (manual 26) |
 | `alerts.py` | heartbeat (dead man's switch) + ntfy-style push messages; unclean-stop detection |
 | `sleepmode.py` / `change.py` / `usage.py` / `startup.py` / `timeline.py` / `index.py` / `selfcheck.py` / `gamepad.py` / `music.py` / `radio.py` | sleep mode; think-only-on-change gate; all-time cost ledger; staggered startup; event timeline; SQLite FTS5 search; `/check`; Xbox controller; Bluetooth/AirPlay; Bluetooth/Wi-Fi robot-to-robot link |
 

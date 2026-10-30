@@ -276,6 +276,18 @@ class StartupConfig:
 
 
 @dataclass
+class FacesConfig:
+    enabled: bool = False        # recognise people who asked to be remembered (manual 26). Off until you turn it on
+    match_threshold: float = 0.40   # how alike two faces must be to count as the same person (SFace's own default is 0.363)
+    margin: float = 0.05         # and how much better than the next person, so two lookalikes give "don't know"
+    samples_to_take: int = 5     # pictures taken when someone is introduced
+    sample_gap_s: float = 0.6    # pause between them
+    confirm_seconds: float = 30.0   # time to type /face remember confirm
+    max_people: int = 20
+    max_samples: int = 8         # per person; when full, the newest replaces the most similar old one
+
+
+@dataclass
 class Config:
     drive: DriveConfig = field(default_factory=DriveConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
@@ -295,6 +307,7 @@ class Config:
     startup: StartupConfig = field(default_factory=StartupConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     sleep: SleepConfig = field(default_factory=SleepConfig)
+    faces: FacesConfig = field(default_factory=FacesConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 
