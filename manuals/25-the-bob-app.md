@@ -122,5 +122,12 @@ newer one, a **Download** button appears; it opens the download in your browser.
 Applications, replacing the old one. On Android, open the downloaded file to install it over the old app.
 
 The app does not replace itself: that would need extra permissions it doesn't have. On Android, an update only installs over the old
-app if both were signed with the same key; builds made by GitHub's workflow use a throw-away key each time, so you may have to
-uninstall the old app first until a fixed signing key is set up.
+app if both were signed with the same key, and with a higher build number.
+
+- **Releases from 26.12 on** are signed with one fixed key, kept as GitHub secrets, and each build gets a higher build number, so a new
+  APK installs over the old one. (Builds before that used a throw-away key: uninstall the old app once.)
+- **The key** is made once by whoever runs the project. It lives in a private folder (`~/.bob-signing/`) and in four GitHub secrets
+  (`BOB_KEYSTORE_BASE64`, `BOB_KEYSTORE_PASSWORD`, `BOB_KEY_PASSWORD`, `BOB_KEY_ALIAS`). **Back that folder up somewhere safe.** If the
+  key is lost, nobody can update the Android app any more: everyone would have to uninstall and reinstall.
+- A release that can't find the key stops with an error, instead of quietly shipping an APK nobody could update. A test build run by hand
+  only warns. After each build the workflow prints the signing key's fingerprint in the run summary, so you can check it never changes.

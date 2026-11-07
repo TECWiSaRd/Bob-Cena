@@ -18,7 +18,7 @@ Mac and Android).
 
 **App updates:** More, App updates checks GitHub's latest release (`app_update.dart`; `appVersion` must equal `pubspec.yaml`'s version and
 `version.py`'s `__version__`; a test checks pubspec) and opens the download in the browser. It does not self-install (macOS sandbox; Android
-CI builds use a throw-away debug key, so a stable release key is still needed for in-place updates).
+CI builds are signed with the fixed release key from the `BOB_KEY*` GitHub secrets (kept in `~/.bob-signing/` on the owner's Mac: never in the repo, never lose it) and a rising build number, so APKs update in place. 26.11 itself used a throw-away key).
 
 **Wiki:** the GitHub wiki is generated from `manuals/` by `tools/make_wiki.py` (published by `.github/workflows/wiki.yml` on every push to
 main). Edit the manuals, never the generated wiki pages; hand-made wiki pages and uploads are left alone. A dead link in a manual stops the build.

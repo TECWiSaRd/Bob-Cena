@@ -70,11 +70,45 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Release signing key
+        # The same key every time is what lets a new APK install over the old one. It lives in GitHub secrets
+        # (BOB_KEYSTORE_BASE64, BOB_KEYSTORE_PASSWORD, BOB_KEY_PASSWORD, BOB_KEY_ALIAS), never in the repository.
+        env:
+          KEYSTORE_B64: ${{ secrets.BOB_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.BOB_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.BOB_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.BOB_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            if [ "${{ github.event_name }}" = "release" ]; then
+              echo "::error::No signing key is set up, so this release would be signed with a throw-away key and could not update older installs. Add the four BOB_KEY* secrets (manual 25), then publish again."
+              exit 1
+            fi
+            echo "::warning::No signing key set up: this test build uses a throw-away key."
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/bob-release.jks"
+          {
+            echo "BOB_KEYSTORE_FILE=$RUNNER_TEMP/bob-release.jks"
+            echo "BOB_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "BOB_KEY_PASSWORD=$KEY_PASSWORD"
+            echo "BOB_KEY_ALIAS=$KEY_ALIAS"
+          } >> "$GITHUB_ENV"
       - name: Build
         working-directory: app
+        # Android only installs an update with a HIGHER build number, so use the run number (it always goes up).
         run: |
           flutter pub get
-          flutter build apk --release
+          flutter build apk --release --build-number=${{ github.run_number }}
+      - name: Check who signed it
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs app/build/app/outputs/flutter-apk/app-release.apk | tee signer.txt
+          grep -E "certificate SHA-256" signer.txt | head -1 | sed 's/^/Signing key fingerprint: /' >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event_name }}" = "release" ] && grep -q "Android Debug" signer.txt; then
+            echo "::error::This APK was signed with the throw-away debug key, not the release key."
+            exit 1
+          fi
       - name: Name it
         run: cp app/build/app/outputs/flutter-apk/app-release.apk Bob-android.apk
       - uses: actions/upload-artifact@v4

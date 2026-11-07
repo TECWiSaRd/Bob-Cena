@@ -30,11 +30,24 @@ android {
         versionName = flutter.versionName
     }
 
+    // The release key comes from the environment (GitHub Actions secrets; see .github/workflows/build-app.yml), never
+    // from a file in the repository. Without it (a build on your own Mac) the debug key is used, so
+    // `flutter run --release` still works, but that APK can't update one signed with the real key.
+    val releaseKeystore = System.getenv("BOB_KEYSTORE_FILE")
+    signingConfigs {
+        if (releaseKeystore != null && file(releaseKeystore).exists()) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("BOB_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("BOB_KEY_ALIAS")
+                keyPassword = System.getenv("BOB_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 }
