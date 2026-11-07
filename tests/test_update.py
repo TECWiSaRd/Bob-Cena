@@ -43,6 +43,58 @@ class RepoCase(unittest.TestCase):
 
 
 class UpdaterTests(RepoCase):
+    def test_a_copy_left_on_a_commit_is_moved_back_onto_main(self):
+        git(self.pi, "checkout", "-q", "--detach")                              # what the owner's Pi was in
+        self.push("good.py", "X = 2\n", "Make X two")
+        ok, text, behind = self.up.status()
+        self.assertEqual((ok, behind), (True, 1))
+        self.assertIn("isn't on a branch", text)
+        ok, text, changed = self.up.apply()
+        self.assertEqual((ok, changed), (True, True))
+        self.assertEqual(git(self.pi, "rev-parse", "--abbrev-ref", "HEAD"), "main")      # and on a branch again
+        self.assertEqual((self.pi / "good.py").read_text(), "X = 2\n")
+        self.assertEqual(self.up.status()[2], 0)                                 # so the next /update works the normal way
+
+    def test_a_detached_copy_that_is_already_current_just_says_so(self):
+        git(self.pi, "checkout", "-q", "--detach")
+        ok, text, behind = self.up.status()
+        self.assertEqual((ok, behind), (True, 0))
+        ok, text, changed = self.up.apply()
+        self.assertEqual((ok, changed), (True, False))
+
+    def test_a_detached_commit_with_its_own_work_is_not_touched(self):
+        git(self.pi, "checkout", "-q", "--detach")
+        (self.pi / "mine.py").write_text("Z = 1\n")
+        git(self.pi, "add", "."), git(self.pi, "commit", "-qm", "my own work")
+        mine = git(self.pi, "rev-parse", "HEAD")
+        self.push("good.py", "X = 2\n", "Make X two")
+        ok, text, behind = self.up.status()
+        self.assertFalse(ok)
+        self.assertIn("isn't part of GitHub's main", text)
+        ok, text, changed = self.up.apply()
+        self.assertEqual((ok, changed), (False, False))
+        self.assertEqual(git(self.pi, "rev-parse", "HEAD"), mine)
+
+    def test_a_local_main_with_unpushed_work_is_not_overwritten(self):
+        (self.pi / "mine.py").write_text("Z = 1\n")
+        git(self.pi, "add", "."), git(self.pi, "commit", "-qm", "unpushed work on main")
+        first = git(self.pi, "rev-parse", "HEAD~1")
+        git(self.pi, "checkout", "-q", "--detach", first)                        # detached at an older, plain commit
+        self.push("good.py", "X = 2\n", "Make X two")
+        ok, text, changed = self.up.apply()
+        self.assertEqual((ok, changed), (False, False))
+        self.assertIn("local main", text)
+        self.assertIn("unpushed work", git(self.pi, "log", "-1", "--format=%s", "main"))
+
+    def test_a_bad_update_from_a_detached_copy_is_rolled_back(self):
+        git(self.pi, "checkout", "-q", "--detach")
+        before = git(self.pi, "rev-parse", "HEAD")
+        self.push("broken.py", "def oops(:\n", "Add a broken file")
+        ok, text, changed = self.up.apply()
+        self.assertEqual((ok, changed), (False, False))
+        self.assertEqual(git(self.pi, "rev-parse", "HEAD"), before)
+        self.assertFalse((self.pi / "broken.py").exists())
+
     def test_up_to_date(self):
         ok, text, behind = self.up.status()
         self.assertEqual((ok, behind), (True, 0))

@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+DEFAULT_BRANCH = "main"
 NOT_GIT = ("this copy of Bob isn't a git checkout, so he can't update himself. "
            "Run ./setup_updates.sh once (manual 02), or copy files with rsync as before")
 
@@ -37,13 +38,27 @@ class Updater:
         code, out = self.git("rev-parse", "--abbrev-ref", "HEAD")
         return out if code == 0 and out != "HEAD" else None
 
+    def _ancestor(self, older: str, newer: str) -> bool:
+        return self.git("merge-base", "--is-ancestor", older, newer)[0] == 0
+
+    def _detached_problem(self, branch: str) -> str | None:
+        """A copy that isn't on a branch (left on a commit or tag by hand) can still be updated, as long as it is a plain
+        earlier point of GitHub's main and no local work would be lost by moving onto it. Returns why not, or None."""
+        remote = f"origin/{branch}"
+        if not self._ancestor("HEAD", remote):
+            return (f"this copy is on a commit that isn't part of GitHub's {branch} (it has its own changes), so I won't move it. "
+                    f"If that is wrong, run: git checkout {branch}")
+        if self.git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")[0] == 0 and not self._ancestor(branch, remote):
+            return f"a local {branch} branch has changes GitHub doesn't, so I won't move it. Run: git status, then git log {branch}"
+        return None
+
     def status(self) -> tuple[bool, str, int]:
         """(ok, text, commits_behind). Fetches from GitHub but changes nothing."""
         if not self.is_git:
             return False, NOT_GIT, 0
         branch = self._branch()
-        if not branch:
-            return False, "git isn't on a branch (detached HEAD), so /update can't tell what is new", 0
+        detached = branch is None
+        branch = branch or DEFAULT_BRANCH
         code, out = self.git("fetch", "--quiet", "origin", branch)
         if code != 0:
             return False, f"couldn't reach GitHub ({out.splitlines()[-1] if out else code}). Is the deploy key set up? (manual 02)", 0
@@ -53,6 +68,11 @@ class Updater:
         behind = int(count)
         dirty = self.git("status", "--porcelain", "--untracked-files=no")[1]
         note = "\nNote: files here were changed by hand; /update confirm will refuse until they are committed or undone." if dirty else ""
+        if detached:
+            problem = self._detached_problem(branch)
+            if problem:
+                return False, problem, 0
+            note += f"\nNote: this copy isn't on a branch (it was left on a commit); /update confirm will move it onto {branch}."
         if behind == 0:
             return True, f"up to date with origin/{branch}.{note}", 0
         _, log = self.git("log", "--oneline", "-n", "10", f"HEAD..origin/{branch}")
@@ -67,10 +87,22 @@ class Updater:
         if self.git("status", "--porcelain", "--untracked-files=no")[1]:
             return False, "files here were changed by hand, so I won't overwrite them. Commit or undo them first (git status)", False
         branch = self._branch()
-        if not branch:
-            return False, "git isn't on a branch", False
+        detached = branch is None
+        branch = branch or DEFAULT_BRANCH
         before = self.git("rev-parse", "HEAD")[1]
-        code, out = self.git("pull", "--ff-only", "--quiet", "origin", branch)
+        if detached:
+            code, out = self.git("fetch", "--quiet", "origin", branch)
+            if code != 0:
+                return False, f"couldn't reach GitHub, nothing changed: {out.splitlines()[-1] if out else code}", False
+            problem = self._detached_problem(branch)
+            if problem:
+                return False, problem, False
+            # Move onto the branch at GitHub's latest. Only a fast-forward of what we already have: checked just above.
+            code, out = self.git("checkout", "-q", "-B", branch, f"origin/{branch}")
+            if code == 0:
+                self.git("branch", "-q", f"--set-upstream-to=origin/{branch}", branch)
+        else:
+            code, out = self.git("pull", "--ff-only", "--quiet", "origin", branch)
         if code != 0:
             return False, f"git pull failed, nothing changed: {out.splitlines()[-1] if out else code}", False
         after = self.git("rev-parse", "HEAD")[1]

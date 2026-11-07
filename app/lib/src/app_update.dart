@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:url_launcher/url_launcher.dart';
 
 /// The version of this app. Keep it equal to `version:` in pubspec.yaml (a test checks).
-const appVersion = '26.10.2';
+const appVersion = '26.11.0';
 
 const releasesApi =
     'https://api.github.com/repos/TECWiSaRd/Bob-Cena/releases/latest';
@@ -24,7 +24,7 @@ class ReleaseInfo {
   final String notes;
 }
 
-/// "v26.10.2" and "26.10.2" are the same version. Null when it isn't dotted numbers.
+/// "v26.11.0" and "26.11.0" are the same version. Null when it isn't dotted numbers.
 List<int>? parseVersion(String text) {
   final t = text.trim().replaceFirst(RegExp(r'^[vV]'), '');
   final m = RegExp(r'^\d+(\.\d+)*').firstMatch(t);

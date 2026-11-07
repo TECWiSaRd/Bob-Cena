@@ -12,7 +12,7 @@ asks, repeat. People talk to him by voice, console, a shared console, a phone-st
 Mac and Android).
 
 - Owner: Adam (the Pi account Bob runs as is `adam`; Mac at `/Users/Adam/Documents/Bob Cena`; the Pi is reachable as `bob`).
-- Repo: `github.com/TECWiSaRd/Bob-Cena` (GitHub reports it PUBLIC, so release downloads and the releases API need no login) (branch `main`). Tags: `26.10`, `26.10.1` ("Hindsight"), old `1.0.0`. **26.11 is planned.**
+- Repo: `github.com/TECWiSaRd/Bob-Cena` (GitHub reports it PUBLIC, so release downloads and the releases API need no login) (branch `main`). Tags: `26.10`, `26.10.1` ("Hindsight"), old `1.0.0`. **26.11 is the next release: what is already built (below), shipped after the owner's Pi testing. The household/Room Intelligence plan moved to 26.12.**
 - Friends share one Bob across houses (some with Home Assistant, some without). Another robot, **John**, is a friend's; they talk over a signed radio.
 - No licence file on purpose ("no licence for now").
 
@@ -117,7 +117,7 @@ After pulling: `./install.sh --service && sudo systemctl daemon-reload` if `bob.
 
 ## Decisions already made (do not re-litigate)
 
-- **Identity (26.11):** people are identified by their **Pi (Linux) username, compared case-insensitively**. The global owner / head admin is the
+- **Identity (26.12):** people are identified by their **Pi (Linux) username, compared case-insensitively**. The global owner / head admin is the
   account Bob runs as. A name with no matching login may still register as an "app-only" person (warn, don't block); a name that matches a real
   account is that account; an app-only name cannot take a real username without an invite from that user or the owner. Household owners come from
   the existing `.env` mapping (`TOKEN_NAME`, `WIFI[ssid]=NAME`) using usernames.
@@ -131,10 +131,17 @@ After pulling: `./install.sh --service && sudo systemctl daemon-reload` if `bob.
 - **Home Assistant** is optional and tied to named Wi-Fi networks (`[home] wifi`), so friends' houses without it are left alone.
 - **Updates:** `/update` pulls from GitHub into a git checkout made by `setup_updates.sh` (read-only deploy key); owner only.
 - **Branching:** one `main` branch; the app and server share a protocol, so keep them together. Short-lived feature branches for risky work.
-- **Future (not 26.11):** Waveshare **ESP32-S3-Matrix** (8x8 WS2812 on GPIO14, QMI8658 IMU, Wi-Fi/BLE, USB-C) as an expression display and
+- **Future (after 26.12):** Waveshare **ESP32-S3-Matrix** (8x8 WS2812 on GPIO14, QMI8658 IMU, Wi-Fi/BLE, USB-C) as an expression display and
   lift/tilt sensor; keep Bob working without it. Confirm pins on Waveshare's wiki first.
 
-## The 26.11 plan (full text in `temp/26.11.md`, untracked)
+## What 26.11 contains (decided 2026-10-29: ship what is built, after testing)
+
+Everything since 26.10.1: alerts (heartbeat + ntfy), `/version` and `/update`, sleep mode, `/goto` rooms, usage ledger, staggered start, vitals
+recorder, per-person manual drive, Xbox controller fixes, Wi-Fi radio to John, think-on-change, the secure Bob app (Mac + Android) with
+pairing, redesign, toggles, light/dark and the in-app update button, laser + ultrasonic distance sensors, opt-in face recognition, the
+GitHub wiki, and the review fixes. Checklist for the owner's testing: `temp/26.11-checklist.md` (untracked).
+
+## The 26.12 plan (full text in `temp/26.11.md`, untracked; the file keeps its old name)
 
 "Portable Household Companion + Flagship Intelligence." Foundations: global owner plus Wi-Fi-specific household owners; per-household
 profiles (goals, personality, routines, quiet/sleep, approved HA rooms); safe network transitions (stop wheels, switch profile, pause AI);
@@ -143,7 +150,7 @@ with timezone-aware schedules and no replay after restart; app and console edito
 secure credential storage; searchable activity history; safer drive lifecycle; Android parity and CI artifacts. Then **Room Intelligence**
 (supported: mapping wizard, named missions on taught routes only, bounded unsupervised missions that are explicitly armed, a guardian that stops
 and never self-resumes). Then **Visual Memory** and **Multi-Bob Teamwork** (experimental, opt-in). Suggested order: A identity and devices,
-B routines and history, C Room Intelligence, D the two previews. If it slips, ship A+B as 26.11 and C+D as 26.12. Household profiles must never
+B routines and history, C Room Intelligence, D the two previews. If it slips, ship A+B first and C+D after. Planned pace: about one phase or feature a week, each followed by a Pi test. Household profiles must never
 change hardware pins, safety distances, speed caps, certificates, secrets or e-stop behaviour.
 
 ## Status: what is verified and what is not

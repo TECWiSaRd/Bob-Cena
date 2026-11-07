@@ -58,7 +58,7 @@ Claude has no way to send alerts.
 
 `/version` shows the code version, a short fingerprint of all the code files, the date of the newest file, and the git state:
 ```
-Bob 26.11-dev, code 3f9a1c2e, newest file 2026-10-22 18:04, git 8c1ec3a
+Bob 26.11, code 3f9a1c2e, newest file 2026-10-22 18:04, git 8c1ec3a
 ```
 Two Pis with the same fingerprint run the same code. A Pi that holds a mix of old and new files (a copy that stopped half way)
 shows a different one. The shared console also compares: if a friend's `bob-console` copy is out of date, they see a warning
