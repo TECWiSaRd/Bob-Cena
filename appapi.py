@@ -22,6 +22,8 @@ import threading
 import time
 from pathlib import Path
 
+from identity import Identity, IdentityError, Principal
+
 log = logging.getLogger("bob.appapi")
 
 ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"        # no 0/O, 1/I/L: easy to read and type
@@ -37,6 +39,10 @@ def normalize_code(text: str) -> str:
 
 def show_code(code: str) -> str:
     return "-".join(code[i:i + 4] for i in range(0, len(code), 4))
+
+
+class PairingRefused(Exception):
+    """The proof was right but the person may not be registered under that name. The code is not used up."""
 
 
 def _hmac(code: str, message: str) -> str:
@@ -89,8 +95,8 @@ class DeviceStore:
     def _hash(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
 
-    def add(self, name: str, by: str = "") -> tuple[str, str]:
-        """(device id, token). The token is shown once and never stored."""
+    def add(self, name: str, by: str = "", principal: Principal | None = None) -> tuple[str, str]:
+        """(device id, token). The token is shown once and never stored. `principal` is the person it belongs to."""
         name = " ".join(str(name).split())[:40] or "device"
         with self._lock:
             if len(self.devices) >= MAX_DEVICES:
@@ -100,6 +106,8 @@ class DeviceStore:
                 ident, n = f"{base} ({n})", n + 1
             token = secrets.token_urlsafe(32)
             self.devices[ident] = {"token_hash": self._hash(token), "created": self._clock(), "last_seen": None, "by": by}
+            if principal is not None:
+                self.devices[ident]["principal"] = principal.as_dict()
             self._save()
             return ident, token
 
@@ -123,6 +131,11 @@ class DeviceStore:
                         pass
         return found
 
+    def principal_of(self, ident: str) -> Principal | None:
+        """The person a device belongs to, or None for a device paired before people were recorded."""
+        with self._lock:
+            return Principal.from_dict(self.devices.get(ident, {}).get("principal"))
+
     def remove(self, name: str) -> bool:
         with self._lock:
             hit = next((k for k in self.devices if k.lower() == name.lower()), None)
@@ -138,24 +151,29 @@ class DeviceStore:
             for ident, info in sorted(self.devices.items()):
                 seen = info.get("last_seen")
                 ago = "never used" if not seen else f"last used {max(0, int((self._clock() - seen) / 60))} min ago"
-                out.append(f"{ident} (paired by {info.get('by') or '?'}, {ago})")
+                who = Principal.from_dict(info.get("principal"))
+                out.append(f"{ident} for {who.label if who else 'nobody yet (paired before people were recorded)'}, "
+                           f"paired by {info.get('by') or '?'}, {ago}")
         return out
 
 
 class Pairing:
-    def __init__(self, devices: DeviceStore, fingerprint: str, robot: str = "Bob", clock=time.monotonic):
+    def __init__(self, devices: DeviceStore, fingerprint: str, robot: str = "Bob", clock=time.monotonic,
+                 identity: Identity | None = None):
         self.devices, self.fingerprint, self.robot, self._clock = devices, fingerprint, robot, clock
+        self.identity = identity
         self._codes: dict[str, dict] = {}              # code -> {"expires", "by", "wrong"}
         self._lock = threading.Lock()
 
-    def new_code(self, by: str) -> str:
+    def new_code(self, by: str, principal: Principal | None = None) -> str:
+        """A one-time code. With a `principal`, it is an invite for that person: whoever uses it becomes them."""
         code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
         with self._lock:
             self._purge()
             if len(self._codes) >= 3:                           # a few at a time is plenty
                 oldest = min(self._codes, key=lambda c: self._codes[c]["expires"])
                 del self._codes[oldest]
-            self._codes[code] = {"expires": self._clock() + CODE_LIFETIME, "by": by, "wrong": 0}
+            self._codes[code] = {"expires": self._clock() + CODE_LIFETIME, "by": by, "wrong": 0, "principal": principal}
         return code
 
     def _purge(self) -> None:
@@ -168,8 +186,9 @@ class Pairing:
             self._purge()
             return len(self._codes)
 
-    def redeem(self, device: str, nonce: str, proof: str) -> dict | None:
-        """The reply for the app, or None when the proof doesn't match any open code."""
+    def redeem(self, device: str, nonce: str, proof: str, user: str | None = None) -> dict | None:
+        """The reply for the app, or None when the proof doesn't match any open code. `user` is the name typed in the app:
+        it only counts for a code that wasn't made for a particular person, and never lets anyone take a real login."""
         if not (isinstance(nonce, str) and 8 <= len(nonce) <= 64 and isinstance(proof, str)):
             return None
         with self._lock:
@@ -182,11 +201,25 @@ class Pairing:
                 for info in self._codes.values():
                     info["wrong"] += 1
                 return None
+            info = self._codes[match]
+            person = info.get("principal")
+            if person is None and user and self.identity is not None:
+                try:
+                    person = self.identity.resolve(user)
+                except IdentityError as e:
+                    raise PairingRefused(str(e))
+                if person.kind != "app":
+                    raise PairingRefused(f"{person.display} is a login on this Pi. Ask {self.identity.owner} (or {person.display}) "
+                                         f"for an invite made for that name: /pair {person.display}")
             by = self._codes.pop(match)["by"]               # single use
-        ident, token = self.devices.add(device, by)
-        log.info("Device paired: %s (code from %s)", ident, by)
-        return {"token": token, "device": ident, "name": self.robot, "fingerprint": self.fingerprint,
-                "server_proof": server_proof(match, nonce, self.fingerprint, token)}
+        ident, token = self.devices.add(device, by, person)
+        log.info("Device paired: %s for %s (code from %s)", ident, person.label if person else "nobody in particular", by)
+        reply = {"token": token, "device": ident, "name": self.robot, "fingerprint": self.fingerprint,
+                 "server_proof": server_proof(match, nonce, self.fingerprint, token)}
+        if person is not None:
+            reply["user"] = person.display
+            reply["user_kind"] = person.kind
+        return reply
 
 
 # ---- the version-1 HTTP API (called from stream.py's request handler) -------------------------------------------------
@@ -260,7 +293,12 @@ def handle_v1(h, server, method: str, url, query) -> None:
         body = _read_json(h)
         if body is None:
             return
-        reply = server.pairing.redeem(str(body.get("device", "device")), body.get("nonce"), body.get("proof"))
+        user = body.get("user")
+        try:
+            reply = server.pairing.redeem(str(body.get("device", "device")), body.get("nonce"), body.get("proof"),
+                                          user if isinstance(user, str) else None)
+        except PairingRefused as e:
+            return h._json({"error": str(e)}, 403)
         if reply is None:
             server.lockout.failed(ip)
             return h._json({"error": "that code didn't work (wrong, expired or already used)"}, 401)
@@ -275,7 +313,7 @@ def handle_v1(h, server, method: str, url, query) -> None:
     if path == "/cmd" and method == "POST":
         body = _read_json(h)
         if body is not None:
-            h._json({"output": server.run_command(body.get("cmd", ""), by=f"app:{who}")})
+            h._json({"output": server.run_command(body.get("cmd", ""), by=f"app:{server.person_label(who)}")})
         return
     if path == "/drive" and method == "POST":
         body = _read_json(h)

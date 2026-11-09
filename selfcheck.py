@@ -196,6 +196,13 @@ def run_checks(ctrl, base: Path, run=_run, read=_read, which=shutil.which) -> li
     else:
         add(OK if pad.connected else WARN, "controller", pad.describe())
 
+    mb = getattr(ctrl, "microbit", None)
+    if mb is None:
+        add(OFF, "micro:bit", "off ([microbit] enabled = false)")
+    else:
+        note = "" if ctrl.cfg.microbit.key else " (no key set: its radio is open to anyone nearby)"
+        add(OK if mb.connected else WARN, "micro:bit", mb.describe() + note)
+
     remote = getattr(ctrl, "remote", None)
     if remote is not None:
         if not ctrl.cfg.remote.enabled:

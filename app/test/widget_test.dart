@@ -283,12 +283,12 @@ void main() {
       expect(find.text('Go to a room'), findsOneWidget);
       expect(find.text('Kitchen'), findsWidgets);
       await tester.scrollUntilVisible(
-        find.text('Unpair this device'),
+        find.textContaining('Unpair from'),
         200,
         scrollable: find.byType(Scrollable).last,
       );
       expect(find.byKey(const Key('your-name')), findsOneWidget);
-      expect(find.text('Unpair this device'), findsOneWidget);
+      expect(find.textContaining('Unpair from'), findsOneWidget);
       s.dispose();
     },
   );

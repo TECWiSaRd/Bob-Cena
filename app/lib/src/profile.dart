@@ -63,22 +63,57 @@ class BobProfile {
 }
 
 class ProfileStore {
-  static const _key = 'bob_profile_v1';
+  static const _oldKey = 'bob_profile_v1'; // 26.11 and before: one Bob
+  static const _listKey = 'bob_profiles_v2'; // every paired Bob
+  static const _activeKey = 'bob_active_v2'; // fingerprint of the Bob in use
 
-  Future<BobProfile?> load() async {
+  /// All paired Bobs. A Bob is told apart by his certificate's fingerprint, so pairing the same Bob again replaces him.
+  /// A single Bob saved by an older version is picked up here.
+  Future<List<BobProfile>> loadAll() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_key);
-    if (raw == null) return null;
-    try {
-      return BobProfile.fromJson(jsonDecode(raw));
-    } catch (_) {
-      return null;
+    final out = <BobProfile>[];
+    final raw = prefs.getString(_listKey);
+    if (raw != null) {
+      try {
+        final data = jsonDecode(raw);
+        if (data is List) {
+          for (final item in data) {
+            final p = BobProfile.fromJson(item);
+            if (p != null && !out.any((o) => o.fingerprint == p.fingerprint)) {
+              out.add(p);
+            }
+          }
+        }
+      } catch (_) {}
+      return out;
     }
+    final old = prefs.getString(_oldKey);
+    if (old != null) {
+      try {
+        final p = BobProfile.fromJson(jsonDecode(old));
+        if (p != null) out.add(p);
+      } catch (_) {}
+    }
+    return out;
   }
 
-  Future<void> save(BobProfile profile) async {
+  Future<String?> loadActive() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, jsonEncode(profile.toJson()));
+    return prefs.getString(_activeKey);
+  }
+
+  Future<void> saveAll(List<BobProfile> profiles, String? active) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _listKey,
+      jsonEncode([for (final p in profiles) p.toJson()]),
+    );
+    if (active == null) {
+      await prefs.remove(_activeKey);
+    } else {
+      await prefs.setString(_activeKey, active);
+    }
+    await prefs.remove(_oldKey); // the list is now the one place they live
   }
 
   static const _themeKey = 'bob_theme_mode_v1';
@@ -96,10 +131,5 @@ class ProfileStore {
   Future<void> saveThemeMode(ThemeMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_themeKey, mode.name);
-  }
-
-  Future<void> clear() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_key);
   }
 }

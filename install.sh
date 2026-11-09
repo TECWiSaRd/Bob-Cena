@@ -29,6 +29,10 @@ python3 -m venv --system-site-packages .venv
 echo "== Laser distance sensor library (only needed if you fit a VL53L1X; manual 09)"
 .venv/bin/pip install vl53l1x || echo "(vl53l1x not installed; fine unless you use the laser sensor)"
 
+echo "== micro:bit support (only needed if you drive Bob with a micro:bit; manual 27)"
+.venv/bin/pip install pyserial || echo "(pyserial not installed; fine unless you use a micro:bit)"
+sudo usermod -aG dialout "$USER" || true     # lets this account open USB serial ports (log out and in, or reboot, once)
+
 echo "== Speech recognition (faster-whisper, for the USB microphone)"
 # Best effort: Bob works without it; /listen on will say what is missing.
 if .venv/bin/pip install faster-whisper \

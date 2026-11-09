@@ -96,11 +96,15 @@ class _PairScreenState extends State<PairScreen> {
       final profile = await client.pair(
         _code.text,
         _device.text.trim().isEmpty ? 'device' : _device.text.trim(),
+        user: _user.text,
       );
+      // The name Bob returns (the person the invite was made for) wins over what was typed.
       await state.setProfile(
-        profile.copyWith(
-          user: _user.text.trim().isEmpty ? null : _user.text.trim(),
-        ),
+        profile.user != null
+            ? profile
+            : profile.copyWith(
+                user: _user.text.trim().isEmpty ? null : _user.text.trim(),
+              ),
       );
     } on BobApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -124,6 +128,18 @@ class _PairScreenState extends State<PairScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
           children: [
+            if (context.watch<AppState>().profiles.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const Key('cancel-add-bob'),
+                  onPressed: _busy
+                      ? null
+                      : context.read<AppState>().cancelAddingBob,
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Back to my Bobs'),
+                ),
+              ),
             const Center(
               child: BobHeader(
                 online: false,
@@ -145,7 +161,7 @@ class _PairScreenState extends State<PairScreen> {
             ),
             const SizedBox(height: 12),
             const Text(
-              '1. On Bob\'s console (or the shared console) type  /pair  to get a one-time code.',
+              '1. On Bob\'s console (or the shared console) type  /pair  to get a one-time code for you. The owner can type  /pair YourName  to make one for you.',
               style: TextStyle(fontSize: 15),
             ),
             const SizedBox(height: 16),

@@ -210,6 +210,18 @@ class GamepadConfig:
 
 
 @dataclass
+class MicrobitConfig:
+    enabled: bool = False        # drive with a BBC micro:bit (see manual 27)
+    device: str = "auto"         # "auto" finds a micro:bit by its USB name; or a path such as "/dev/ttyACM0"
+    baud: int = 115200
+    deadzone: float = 0.2        # tilt below this (fraction of full tilt) is ignored
+    speed: float = 0.6           # full tilt drives at this fraction of the speed cap (the cap still applies on top)
+    drive: bool = True           # false = the micro:bit can only press the emergency stop
+    key: str = ""                # a short word the micro:bit program also knows; without it, drive and talk lines are ignored. E-stop never needs it
+    allow_clear: bool = False    # true = holding B on the micro:bit may release the emergency stop (off: use /clear)
+
+
+@dataclass
 class RemoteConfig:
     enabled: bool = False        # a shared console: friends with a Pi login attach with `bob-console` (see manual 20)
     socket: str = "/tmp/bob-console.sock"
@@ -303,6 +315,7 @@ class Config:
     home: HomeConfig = field(default_factory=HomeConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
     gamepad: GamepadConfig = field(default_factory=GamepadConfig)
+    microbit: MicrobitConfig = field(default_factory=MicrobitConfig)
     power: PowerConfig = field(default_factory=PowerConfig)
     startup: StartupConfig = field(default_factory=StartupConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)

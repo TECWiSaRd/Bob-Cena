@@ -178,6 +178,16 @@ btn_slow = 4
 btn_back = 6
 btn_drive = 7
 
+[microbit]
+enabled = false            # true = drive with a BBC micro:bit (manual 27). Hold A and tilt = drive, B = manual on/off, A+B = emergency stop
+device = "auto"            # finds a micro:bit by its USB name, or a path such as "/dev/ttyACM0"
+baud = 115200
+deadzone = 0.2
+speed = 0.6                # full tilt = this fraction of the speed cap
+drive = true               # false = the micro:bit can only press the emergency stop
+key = ""                   # a short word the micro:bit program also knows (its radio is not secure). Needs no key for the emergency stop
+allow_clear = false        # true = holding B for 3 s on the micro:bit may release the emergency stop
+
 [alerts]
 enabled = false            # tell you when something is wrong; needs HEARTBEAT_URL and/or NOTIFY_URL in .env (manual 23)
 heartbeat_every_s = 60.0

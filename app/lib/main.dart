@@ -35,7 +35,9 @@ class BobApp extends StatelessWidget {
               body: Center(child: CircularProgressIndicator()),
             );
           }
-          return s.profile == null ? const PairScreen() : const HomeScreen();
+          return s.profile == null || s.addingBob
+              ? const PairScreen()
+              : const HomeScreen();
         },
       ),
     );

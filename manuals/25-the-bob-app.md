@@ -34,12 +34,32 @@ The red **EMERGENCY STOP** button is on every screen, home included. (It isn't i
 
 1. Make sure Bob is running with `[stream] https = true` (the default) and `openssl` is installed (`sudo apt-get install -y openssl avahi-utils`).
    The first start makes his certificate.
-2. In Bob's console (or `bob-console`), type **`/pair`**. It shows a code like `K7PQ-2M9X-4TWD`, good for 5 minutes and one device.
+2. In Bob's console (or `bob-console`), type **`/pair`**. It shows a code like `K7PQ-2M9X-4TWD`, good for 5 minutes and one device. The
+   code is an **invite for one person**: plain `/pair` is for you, and the owner can type **`/pair Sam`** to make one for Sam (see
+   "Who is who" below).
 3. Open the app. **Add Bob** lists the Bobs it finds on the network (Bonjour). Pick yours, or type `bobcena.local:8443`.
 4. Enter the code and a name for this device ("Adam's Mac"), and tap **Pair**.
 
-That's it: from then on the app opens straight to Bob. `/devices` in Bob's console lists every paired device and `/devices remove NAME`
+That's it: from then on the app opens straight to Bob. The welcome on the home page uses the name Bob gives back, which is the person
+the invite was made for. `/devices` in Bob's console lists every paired device and `/devices remove NAME`
 removes one (it must pair again).
+
+## Who is who
+
+Bob knows people by name, **ignoring upper and lower case** ("SAM" and "sam" are the same person):
+
+- **The owner** is the account Bob runs as (on your Pi, that's you). The head admin.
+- **A Pi person** is anyone with their own login on the Pi (the ones who use the shared console, manual 20). The system checks who they are.
+- **An app-only person** has no login on the Pi. That is allowed, so a friend can still use the app, but a login is better: it is checked
+  by the system instead of being just a word someone typed.
+
+Rules, all enforced by Bob and not by Claude:
+- **Nobody can claim a real login by typing it.** A name that belongs to a login on the Pi can only be paired with an invite from that
+  same person or from the owner. If someone types such a name in the app without an invite, Bob refuses and says who to ask.
+- **Who may invite whom:** the owner can invite anyone, including app-only names (`/pair Grandma Jo`). Everyone else can only invite
+  themselves (`/pair`).
+- **The invite's name wins** over whatever is typed in the app. `/devices` shows who each device belongs to. Devices paired before
+  this existed show "nobody yet" and still work; they can be claimed later.
 
 ## How the connection stays secure
 
@@ -115,14 +135,27 @@ I tried this here: the zip is 8.7 MB and the unzipped app starts.
 | No picture | the camera is off (`/camera on`), or the camera is stuck (`/check`) |
 | Mac asks to allow local network access | allow it; without it Bonjour can't find Bob (you can still type his address) |
 
+## More than one Bob
+
+The app can hold several Bobs (yours and a friend's, say). Open **More**, then **Your Bobs**: tap one to switch to him, or **Add another Bob**
+to pair a new one (the screen has a **Back to my Bobs** button). Each Bob has his own code, device name and welcome name. Only the Bob you
+are using is contacted, and switching stops the wheels of the one you leave. **Unpair from ...** forgets just the Bob you are using. Pairing
+the same Bob again replaces him instead of adding a copy. An app from before 26.12 keeps its one Bob automatically.
+
 ## Updating the app
 
 Open **More**, then **App updates**. The app asks GitHub for the newest release (it also asks once when it starts). If there is a
-newer one, a **Download** button appears; it opens the download in your browser. On a Mac, open the zip and drag Bob into
-Applications, replacing the old one. On Android, open the downloaded file to install it over the old app.
+newer one, an **Update** button appears. You never need the browser:
 
-The app does not replace itself: that would need extra permissions it doesn't have. On Android, an update only installs over the old
-app if both were signed with the same key, and with a higher build number.
+- **Mac:** the app downloads the new version, checks it against the checksum GitHub published and that it is properly signed, then
+  quits, swaps itself for the new one and opens again. The old copy is kept until the new one is in place, and put back if anything
+  goes wrong. Bob has to be somewhere you can write to (Applications is fine). To do this the Mac app runs **without Apple's app
+  sandbox** (a sandboxed app can't replace itself); it still only talks to the Bob you paired, and still pins his certificate.
+- **Android:** the app downloads the update and hands it to Android's installer. Android always asks you to tap **Install**; no app
+  can skip that. The first time, Android also asks you to allow Bob to install apps (a settings page opens; switch it on and tap Update again).
+- If something is missing (no file for your device, or a download that doesn't match its checksum) the app tells you and installs nothing.
+
+On Android, an update only installs over the old app if both were signed with the same key, and with a higher build number.
 
 - **Releases from 26.12 on** are signed with one fixed key, kept as GitHub secrets, and each build gets a higher build number, so a new
   APK installs over the old one. (Builds before that used a throw-away key: uninstall the old app once.)

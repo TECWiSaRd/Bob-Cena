@@ -717,6 +717,27 @@ class _MoreTabState extends State<MoreTab> {
             if (name != null) await s.setUserName(name);
           },
         ),
+        const SizedBox(height: 4),
+        Text('Your Bobs', style: Theme.of(context).textTheme.titleMedium),
+        for (final p in s.profiles)
+          ListTile(
+            key: Key('bob-${p.fingerprint.substring(0, 8)}'),
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              p.fingerprint == s.profile?.fingerprint
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+            ),
+            title: Text(p.name),
+            subtitle: Text('${p.host}:${p.port}'),
+            onTap: () => s.switchTo(p.fingerprint),
+          ),
+        OutlinedButton.icon(
+          key: const Key('add-bob'),
+          onPressed: s.startAddingBob,
+          icon: const Icon(Icons.add),
+          label: const Text('Add another Bob'),
+        ),
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text('Paired with ${s.robotName}'),
@@ -730,7 +751,7 @@ class _MoreTabState extends State<MoreTab> {
             final ok = await showDialog<bool>(
               context: context,
               builder: (c) => AlertDialog(
-                title: const Text('Unpair this device?'),
+                title: Text('Unpair from ${s.robotName}?'),
                 content: Text(
                   '${s.robotName} will forget this device and you will need a new code to add it again.',
                 ),
@@ -749,7 +770,7 @@ class _MoreTabState extends State<MoreTab> {
             if (ok == true) await s.forget();
           },
           icon: const Icon(Icons.link_off),
-          label: const Text('Unpair this device'),
+          label: Text('Unpair from ${s.robotName}'),
         ),
       ],
     );
@@ -791,29 +812,53 @@ class UpdateCard extends StatelessWidget {
                   style: TextStyle(color: scheme.error, fontSize: 12),
                 ),
               ),
+            if (s.updateStage != 'idle') ...[
+              const SizedBox(height: 8),
+              LinearProgressIndicator(
+                key: const Key('update-progress'),
+                value: s.updateStage == 'downloading' ? s.updateProgress : null,
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  s.updateStage == 'downloading'
+                      ? 'Downloading ${(s.updateProgress * 100).round()}%...'
+                      : 'Installing...',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (s.updateAvailable)
+                if (s.updateAvailable && s.updateStage == 'idle')
                   FilledButton.icon(
                     key: const Key('update-download'),
                     onPressed: () async {
                       final messenger = ScaffoldMessenger.of(context);
-                      final ok = await s.downloadUpdate();
-                      messenger.showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            ok
-                                ? 'Opening the download. When it finishes, open it to install${Platform.isMacOS ? ' (drag Bob into Applications, replacing the old one)' : ''}.'
-                                : "Couldn't open the browser. The release is on GitHub: ${latest.page}",
+                      final problem = await s.installUpdate();
+                      if (problem != null) {
+                        messenger.showSnackBar(
+                          SnackBar(content: Text(problem)),
+                        );
+                      } else if (!s.canInstallHere) {
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Opening the download in your browser.',
+                            ),
                           ),
-                        ),
-                      );
+                        );
+                      }
                     },
-                    icon: const Icon(Icons.download),
-                    label: Text('Download ${latest!.version}'),
+                    icon: const Icon(Icons.system_update),
+                    label: Text(
+                      s.canInstallHere
+                          ? 'Update to ${latest!.version}'
+                          : 'Download ${latest!.version}',
+                    ),
                   ),
                 OutlinedButton.icon(
                   key: const Key('update-check'),

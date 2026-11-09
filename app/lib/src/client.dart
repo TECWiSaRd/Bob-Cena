@@ -130,7 +130,11 @@ class BobClient {
       _json('GET', '/api/v1/info', auth: false);
 
   /// Pairs this device using the code shown on Bob's console. Returns the profile to keep.
-  Future<BobProfile> pair(String code, String deviceName) async {
+  Future<BobProfile> pair(
+    String code,
+    String deviceName, {
+    String? user,
+  }) async {
     final information =
         await info(); // also records the certificate we are being shown
     final seen = seenFingerprint;
@@ -145,6 +149,7 @@ class BobClient {
         'device': deviceName,
         'nonce': nonce,
         'proof': clientProof(code, nonce, seen),
+        if (user != null && user.trim().isNotEmpty) 'user': user.trim(),
       },
       auth: false,
     );
@@ -164,6 +169,8 @@ class BobClient {
       fingerprint: seen,
       token: token,
       device: (reply['device'] ?? deviceName).toString(),
+      // Bob says who this device now belongs to; an invite made for someone wins over what was typed.
+      user: reply['user']?.toString(),
     );
   }
 

@@ -42,6 +42,7 @@ This folder has one manual for each part of Bob. Each manual is written so you c
 | 24 | [Sleep mode and going to a room](24-sleep-and-go-to-room.md) | rest at night; `/goto kitchen` |
 | 25 | [The Bob app](25-the-bob-app.md) | the Mac and Android app: pairing, security |
 | 26 | [Face recognition](26-face-recognition.md) | let Bob learn who is who, only for people who agree |
+| 27 | [micro:bit remote](27-micro-bit.md) | drive Bob by tilting a micro:bit |
 
 Two more guides live in the main project folder:
 - [TRAINING_HEY_BOB.md](../TRAINING_HEY_BOB.md): training a better "Hey Bob" wake word.

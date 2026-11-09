@@ -17,7 +17,7 @@ Mac and Android).
 - No licence file on purpose ("no licence for now").
 
 **App updates:** More, App updates checks GitHub's latest release (`app_update.dart`; `appVersion` must equal `pubspec.yaml`'s version and
-`version.py`'s `__version__`; a test checks pubspec) and opens the download in the browser. It does not self-install (macOS sandbox; Android
+`version.py`'s `__version__`; a test checks pubspec) and installs it itself (26.12: in-app download, checksum check; Android hands the APK to the system installer, the Mac app runs with the sandbox OFF by the owner's decision and swaps itself via a detached shell script). (Android
 CI builds are signed with the fixed release key from the `BOB_KEY*` GitHub secrets (kept in `~/.bob-signing/` on the owner's Mac: never in the repo, never lose it) and a rising build number, so APKs update in place. 26.11 itself used a throw-away key).
 
 **Wiki:** the GitHub wiki is generated from `manuals/` by `tools/make_wiki.py` (published by `.github/workflows/wiki.yml` on every push to
@@ -56,7 +56,9 @@ Python (top level, stdlib + `anthropic`; hardware libs come from apt on the Pi a
 | `access.py` | per-person Wi-Fi-scoped tokens (`TOKEN_NAME`, `WIFI[ssid]=NAME`), lockout |
 | `remote.py` / `console.py` | shared console over a unix socket (SO_PEERCRED + groups `bobops`/`bobview`); curses UI; stderr capture |
 | `power.py` / `update.py` / `version.py` | two-step `/shutdown`; `/update` from GitHub (git checkout, rollback); code fingerprints |
+| `microbit.py` | drive with a BBC micro:bit over USB serial (or a radio bridge): `D x y` while A held, `M`, `E`, `T`, `C`; optional key; programs in `microbit/` (manual 27; not tested on hardware) |
 | `faces.py` | opt-in face recognition (SFace via OpenCV): embeddings only in `faces.json`, two-step `/face remember`, `/face improve`, no Claude tool (manual 26) |
+| `identity.py` | who a person is: owner / Pi login / app-only, case-insensitive; who may invite whom (26.12 phase A, in progress) |
 | `alerts.py` | heartbeat (dead man's switch) + ntfy-style push messages; unclean-stop detection |
 | `sleepmode.py` / `change.py` / `usage.py` / `startup.py` / `timeline.py` / `index.py` / `selfcheck.py` / `gamepad.py` / `music.py` / `radio.py` | sleep mode; think-only-on-change gate; all-time cost ledger; staggered startup; event timeline; SQLite FTS5 search; `/check`; Xbox controller; Bluetooth/AirPlay; Bluetooth/Wi-Fi robot-to-robot link |
 
@@ -140,6 +142,14 @@ Everything since 26.10.1: alerts (heartbeat + ntfy), `/version` and `/update`, s
 recorder, per-person manual drive, Xbox controller fixes, Wi-Fi radio to John, think-on-change, the secure Bob app (Mac + Android) with
 pairing, redesign, toggles, light/dark and the in-app update button, laser + ultrasonic distance sensors, opt-in face recognition, the
 GitHub wiki, and the review fixes. Checklist for the owner's testing: `temp/26.11-checklist.md` (untracked).
+
+## 26.12 progress
+
+- **Phase A, week 1 (done, tested with fakes):** `identity.py`; `/pair [NAME]` makes an invite bound to a person (owner can invite anyone, others only
+  themselves); devices store their person; a typed real login without an invite is refused (403, code not used up); app-only names register.
+  The app sends the typed name and shows the name Bob returns. **Next:** device management (`/devices rename|claim|revoke`, last use), household
+  owners from `.env`, role by person.
+- Android release signing key is done (secrets `BOB_KEY*`, key in `~/.bob-signing/`).
 
 ## The 26.12 plan (full text in `temp/26.11.md`, untracked; the file keeps its old name)
 

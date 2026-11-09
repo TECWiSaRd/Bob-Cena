@@ -47,6 +47,9 @@ class PyServer {
 
   Future<String> code() async => (await ask('code'))['code'] as String;
 
+  Future<String> codeFor(String person) async =>
+      (await ask('code-for $person'))['code'] as String;
+
   Future<void> stop() async {
     proc.stdin.writeln('quit');
     await proc.exitCode.timeout(
@@ -121,6 +124,47 @@ void main() {
     );
     c.close();
   });
+
+  test('an invite made for a person makes the device theirs', () async {
+    final c = BobClient(host: '127.0.0.1', port: a.port);
+    final p = await c.pair(
+      await a.codeFor('SAM'),
+      'Sam phone',
+      user: 'whoever',
+    );
+    c.close();
+    expect(
+      p.user,
+      'sam',
+    ); // the real account's own spelling, not what was typed
+  });
+
+  test(
+    'typing a real login without an invite is refused, an app-only name works',
+    () async {
+      final code = await a.code();
+      final c = BobClient(host: '127.0.0.1', port: a.port);
+      await expectLater(
+        c.pair(code, 'Sneaky', user: 'adam'),
+        throwsA(
+          isA<BobApiException>()
+              .having((e) => e.status, 'status', 403)
+              .having(
+                (e) => e.message,
+                'message',
+                contains('login on this Pi'),
+              ),
+        ),
+      );
+      final p = await c.pair(
+        code,
+        'Jo phone',
+        user: 'Grandma Jo',
+      ); // the code still works
+      c.close();
+      expect(p.user, 'Grandma Jo');
+    },
+  );
 
   test('a wrong code is refused and nothing is saved', () async {
     await a.code(); // a real code exists, but we guess another

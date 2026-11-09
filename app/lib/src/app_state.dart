@@ -1,11 +1,14 @@
 import 'dart:async';
 
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 
 import 'app_update.dart';
 import 'client.dart';
 import 'discovery.dart';
+import 'installer.dart';
 import 'profile.dart';
 
 /// Everything the screens show: who we are paired with, Bob's latest status, and whether he is reachable.
@@ -17,9 +20,19 @@ class AppState extends ChangeNotifier {
     this.checkUpdatesAtStart = false,
     Future<ReleaseInfo?> Function()? fetchRelease,
     Future<bool> Function(Uri)? openUrl,
+    AppInstaller? installer,
+    bool selfInstall =
+        true, // false: this device only opens the browser (tests)
+    Directory? downloadDir,
+    Future<void> Function(Uri, File, String?, void Function(double))? download,
   }) : _store = store ?? ProfileStore(),
        _fetchRelease = fetchRelease ?? fetchLatestRelease,
-       _openUrl = openUrl ?? openInBrowser;
+       _openUrl = openUrl ?? openInBrowser,
+       _installer = selfInstall
+           ? (installer ?? installerForThisDevice())
+           : null,
+       _downloadDir = downloadDir,
+       _download = download;
 
   final ProfileStore _store;
   final Duration pollEvery;
@@ -29,6 +42,16 @@ class AppState extends ChangeNotifier {
   bool _disposed = false;
   final Future<ReleaseInfo?> Function() _fetchRelease;
   final Future<bool> Function(Uri) _openUrl;
+  final AppInstaller?
+  _installer; // null on devices that can't install themselves
+  final Directory? _downloadDir;
+  final Future<void> Function(Uri, File, String?, void Function(double))?
+  _download;
+
+  /// Where the in-app update is: idle, downloading (with [updateProgress]) or installing.
+  String updateStage = 'idle';
+  double updateProgress = 0;
+  bool get canInstallHere => _installer != null;
 
   /// The newest GitHub release, once asked (More, App updates).
   ReleaseInfo? latestRelease;
@@ -40,7 +63,9 @@ class AppState extends ChangeNotifier {
   bool loading = true;
   ThemeMode themeMode =
       ThemeMode.system; // the appearance setting (More, Appearance)
-  BobProfile? profile;
+  BobProfile? profile; // the Bob in use right now
+  List<BobProfile> profiles = []; // every Bob paired on this device
+  bool addingBob = false; // showing the pairing screen to add one more
   BobClient? client;
   Map<String, dynamic> status = {};
   bool online = false;
@@ -53,7 +78,14 @@ class AppState extends ChangeNotifier {
   int _session = 0;
 
   Future<void> load() async {
-    profile = await _store.load();
+    profiles = await _store.loadAll();
+    final active = await _store.loadActive();
+    profile = profiles.isEmpty
+        ? null
+        : profiles.firstWhere(
+            (p) => p.fingerprint == active,
+            orElse: () => profiles.first,
+          );
     themeMode = await _store.loadThemeMode();
     loading = false;
     if (profile != null) _connect(profile!);
@@ -95,6 +127,50 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Downloads the newest release inside the app and installs it. Returns null when it worked (on the Mac the app
+  /// closes and reopens by itself), else what went wrong in plain words. Without a file or an installer for this
+  /// device it falls back to the browser.
+  Future<String?> installUpdate() async {
+    final r = latestRelease;
+    final inst = _installer;
+    if (r == null) return 'Check for updates first.';
+    if (updateStage != 'idle') return null;
+    if (inst == null || r.download == null) {
+      return await downloadUpdate()
+          ? null
+          : "Couldn't open the browser. The release is on GitHub: ${r.page}";
+    }
+    final dir = _downloadDir ?? Directory.systemTemp;
+    final name = r.download!.pathSegments.isEmpty
+        ? 'bob-update'
+        : r.download!.pathSegments.last;
+    final file = File('${dir.path}/$name');
+    updateStage = 'downloading';
+    updateProgress = 0;
+    notifyListeners();
+    try {
+      final dl =
+          _download ??
+          (u, f, sum, tick) =>
+              downloadFile(u, f, sha256Hex: sum, onProgress: tick);
+      await dl(r.download!, file, r.sha256, (v) {
+        updateProgress = v;
+        if (!_disposed) notifyListeners();
+      });
+      updateStage = 'installing';
+      notifyListeners();
+      await inst.install(file);
+      return null;
+    } on UpdateException catch (e) {
+      return e.message;
+    } catch (e) {
+      return "The update didn't work: $e";
+    } finally {
+      updateStage = 'idle';
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   void _connect(BobProfile p) {
     _session++;
     if (!autoConnect) {
@@ -110,32 +186,78 @@ class AppState extends ChangeNotifier {
     poll();
   }
 
+  Future<void> _saveProfiles() =>
+      _store.saveAll(profiles, profile?.fingerprint);
+
+  /// Adds a Bob (or replaces the same Bob, told apart by his certificate) and starts using him.
   Future<void> setProfile(BobProfile p) async {
-    await _store.save(p);
+    final i = profiles.indexWhere((o) => o.fingerprint == p.fingerprint);
+    profiles = [...profiles];
+    if (i >= 0) {
+      profiles[i] = p;
+    } else {
+      profiles.add(p);
+    }
     profile = p;
+    addingBob = false;
+    await _saveProfiles();
     status = {};
     _connect(p);
     notifyListeners();
   }
 
-  /// Forget Bob on this device. Also tells Bob to forget the device if he can be reached.
+  /// Use another of the paired Bobs.
+  Future<void> switchTo(String fingerprint) async {
+    if (profile?.fingerprint == fingerprint) return;
+    final p = profiles.where((o) => o.fingerprint == fingerprint).firstOrNull;
+    if (p == null) return;
+    // In-flight polls and drive commands belong to the Bob we are leaving.
+    unawaited(client?.drive(0, 0).catchError((_) {}));
+    profile = p;
+    status = {};
+    online = false;
+    await _saveProfiles();
+    _connect(p);
+    notifyListeners();
+  }
+
+  /// Show the pairing screen so another Bob can be added; the Bob in use stays connected underneath.
+  void startAddingBob() {
+    addingBob = true;
+    notifyListeners();
+  }
+
+  void cancelAddingBob() {
+    addingBob = false;
+    notifyListeners();
+  }
+
+  /// Forget the Bob in use on this device. Also tells him to forget the device if he can be reached.
+  /// If other Bobs are paired, the next one is used; otherwise the pairing screen shows.
   Future<void> forget() async {
     // In-flight polls belong to the old identity and must not repopulate the
     // UI while this device is being unpaired.
     _session++;
     _timer?.cancel();
     _timer = null;
+    final old = profile;
     try {
       await client?.unpair();
     } catch (_) {}
     client?.close();
     client = null;
-    profile = null;
+    profiles = [
+      for (final p in profiles)
+        if (p.fingerprint != old?.fingerprint) p,
+    ];
+    profile = profiles.isEmpty ? null : profiles.first;
     status = {};
     online = false;
     revoked = false;
     problem = null;
-    await _store.clear();
+    addingBob = false;
+    await _saveProfiles();
+    if (profile != null) _connect(profile!);
     notifyListeners();
   }
 
@@ -281,8 +403,12 @@ class AppState extends ChangeNotifier {
     final p = profile;
     if (p == null) return;
     final updated = p.copyWith(user: name.trim());
-    await _store.save(updated);
     profile = updated;
+    profiles = [
+      for (final o in profiles)
+        o.fingerprint == updated.fingerprint ? updated : o,
+    ];
+    await _saveProfiles();
     notifyListeners();
   }
 

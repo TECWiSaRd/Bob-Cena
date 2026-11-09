@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import getpass
 import os
 import re
 import signal
@@ -34,6 +35,7 @@ from music import MusicSystem
 from radio import Radio
 from sensors import RangeSensor
 from calibrate import Calibrator
+from identity import Identity, IdentityError
 from faces import FaceBook, FaceService, SFaceBackend
 from vision import FaceDetector, Follower
 from access import AccessPolicy
@@ -44,6 +46,7 @@ from index import Index
 from home import Home
 from power import PowerControl
 from gamepad import Gamepad
+from microbit import MicroBit
 from startup import Stagger
 from usage import UsageLedger
 from update import Updater
@@ -66,7 +69,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /alerts [test]        whether the heartbeat and phone notifications are working (manual 23)
   /version              which code this is (and whether it is a git checkout)
   /update               owner only: show what is new on GitHub; /update confirm installs it and restarts Bob
-  /pair                 a one-time code to add a phone or computer to the Bob app; /devices lists and removes them (manual 23)
+  /pair [NAME]          a one-time code to add a phone or computer to the Bob app, for you or (owner only) for NAME; /devices lists them (manual 23)
   /face                 who Bob recognises (off by default): /face remember NAME, /face improve NAME, /face forget NAME|all, /face on|off (manual 26)
   /usage                what Claude has cost, all time (today, 7 days, month, per model)
   /resume               start autonomous AI ticks again (/think on|off also works)
@@ -179,6 +182,7 @@ class Controller:
         self.calibrating = None   # the Calibrator while a calibration run is in progress
         self.quit = threading.Event()
         self._check_lock = threading.Lock()
+        self.identity = Identity(getpass.getuser())          # the account Bob runs as is the owner
         self.updater = Updater(BASE)
         self.alerts = Alerts(cfg.alerts, cfg.radio.name, os.environ.get("HEARTBEAT_URL", ""), os.environ.get("NOTIFY_URL", ""), BASE)
         self._update_pending: dict[str, float] = {}
@@ -189,6 +193,7 @@ class Controller:
         self.drive_users: set[str] = set()            # who is driving by hand (/drive adds you, /drive all adds everyone attached)
         self._drive_lock = threading.RLock()
         self.gamepad = Gamepad(cfg.gamepad, self) if cfg.gamepad.enabled else None
+        self.microbit = MicroBit(cfg.microbit, self) if cfg.microbit.enabled else None
         self.ranger = RangeSensor(cfg.sensor, sim)
         self.drive = Drive(cfg.drive, sim, self.ranger)
         self.drive.on_estop = self.estop
@@ -272,6 +277,8 @@ class Controller:
         steps = [("the AI", self.brain.start), ("camera watch and room tags", vision)]
         if self.gamepad:
             steps.append(("the controller", self.gamepad.start))
+        if self.microbit:
+            steps.append(("the micro:bit", self.microbit.start))
         steps += [("the voice", self.audio.warm_up_async), ("the search index", self.index.start)]
         if self.radio:
             steps.append(("the radio", self.radio.start))
@@ -450,19 +457,30 @@ class Controller:
             return faces.forget(rest) if rest else "usage: /face forget <name> | all"
         return "usage: /face [remember NAME | remember confirm | improve NAME | forget NAME|all | on | off]"
 
-    def pair_command(self, by: str | None, role: str) -> str:
-        """/pair: a one-time code for adding a phone or computer to the Bob app."""
+    def pair_command(self, name: str, by: str | None, role: str) -> str:
+        """/pair [NAME]: a one-time invite for adding a phone or computer to the Bob app, for one particular person.
+        With no name it is for you. The owner can invite anyone; everyone else can only invite themselves."""
         if role not in ("owner", "operator"):
             return "only the owner or an operator can pair a device"
         stream = self.stream
         if stream is None or stream.pairing is None:
             return ("the app's secure port isn't running (needs [stream] https = true and openssl; see the log for why). "
                     "Manual 23 has the details")
-        code = stream.pairing.new_code(by or "the console")
+        try:
+            me = self.identity.resolve(by) if by else self.identity.resolve(self.identity.owner)
+            target = self.identity.resolve(name) if name.strip() else me
+        except IdentityError as e:
+            return f"can't do that: {e}"
+        problem = self.identity.invite_problem(me, target)
+        if problem:
+            return f"can't do that: {problem}"
+        code = stream.pairing.new_code(by or "the console", target)
         from appapi import show_code
         host = socket.gethostname().split(".")[0]
         port = stream._httpsd.server_address[1]
-        return (f"Pairing code: {show_code(code)}\n  Good for 5 minutes, one device. In the Bob app choose Add Bob and enter it.\n"
+        advice = self.identity.advice(target)
+        return (f"Pairing code for {target.label}: {show_code(code)}\n  Good for 5 minutes, one device. In the Bob app choose Add Bob and enter it.\n"
+                + (f"  {advice}\n" if advice else "") +
                 f"  Bob should appear by himself on this network; if not, enter the address {host}.local:{port}\n"
                 f"  His certificate: {stream.fingerprint[:16]}... (the app checks it)")
 
@@ -715,6 +733,8 @@ class Controller:
             self.music.stop()     # puts the music volume back if it was ducked
         if self.gamepad:
             self.gamepad.stop()
+        if self.microbit:
+            self.microbit.stop()
         self.listener.stop()
         self.index.stop()
         self.home.stop()
@@ -761,6 +781,8 @@ class Controller:
             names |= {"console"} | set(getattr(getattr(self, "remote", None), "drivers", lambda: [])())
             if self.gamepad is not None and self.gamepad.connected:
                 names.add("gamepad")
+            if self.microbit is not None and self.microbit.connected:
+                names.add("microbit")
         with self._drive_lock:
             self.drive_users = (self.drive_users | names) if self._drive_mode else names
             self._drive_mode = True
@@ -870,7 +892,7 @@ class Controller:
                 self.drive.stop()
                 return "AI paused; any thought in progress is cancelled"
             case "pair":
-                return self.pair_command(by, role)
+                return self.pair_command(arg, by, role)
             case "devices":
                 return self.devices_command(arg.split(None, 1), role)
             case "sleep":

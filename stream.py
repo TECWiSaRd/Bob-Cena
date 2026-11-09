@@ -272,6 +272,11 @@ class StreamServer:
             self._events = (now, rows)
         return self._events[1]
 
+    def person_label(self, who: str) -> str:
+        """The name to show for whoever made a request: the person a paired device belongs to, else the device or token name."""
+        person = self.devices.principal_of(who) if who in self.devices.devices else None
+        return person.display if person else who
+
     def note_user(self, name: str) -> None:
         """Log the first request from each person every 10 minutes, so the log shows who is using the dashboard."""
         now = time.monotonic()
@@ -523,7 +528,7 @@ class StreamServer:
             return
         cert, key, self.fingerprint = made
         robot = self.controller.cfg.radio.name if self.controller else "Bob"
-        self.pairing = appapi.Pairing(self.devices, self.fingerprint, robot)
+        self.pairing = appapi.Pairing(self.devices, self.fingerprint, robot, identity=getattr(self.controller, "identity", None))
         try:
             TlsServer.context = server_context(cert, key)
             self._httpsd = TlsServer((self.cfg.host, self.cfg.https_port), Handler)

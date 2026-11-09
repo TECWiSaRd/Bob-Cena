@@ -16,7 +16,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import config  # noqa: E402
+import config
+from identity import Identity  # noqa: E402
 import stream  # noqa: E402
 from appapi import show_code  # noqa: E402
 
@@ -49,17 +50,22 @@ def main() -> None:
     srv = stream.StreamServer(cfg, SimpleNamespace(capture_jpeg=picture), base=base)
     ctrl = FakeController()
     srv.controller = ctrl
+    srv.start_identity = Identity("adam", lambda: ["sam"])
     srv.status = lambda: {"mode": "AUTO", "thinking": False, "camera": "on", "mic": "off", "muted": False, "cap": 0.8,
                           "cost": 0.1, "model": "sonnet-5-5", "effort": "low", "version": "test", "rooms": ["Kitchen"],
                           "usage": {"today": 0.5, "all": 3.25, "since": "2026-10-20"}, "events": [], "log": []}
     srv.hub.interval = 0.05
     stream.RECHECK_S = 0.2
     srv.start()
+    srv.pairing.identity = srv.start_identity
     print(json.dumps({"ready": True, "https_port": srv._httpsd.server_address[1], "fingerprint": srv.fingerprint}), flush=True)
     for line in sys.stdin:
         word = line.strip()
         if word == "code":
             print(json.dumps({"code": show_code(srv.pairing.new_code("test"))}), flush=True)
+        elif word.startswith("code-for "):
+            person = srv.pairing.identity.resolve(word[len("code-for "):])
+            print(json.dumps({"code": show_code(srv.pairing.new_code("test", person))}), flush=True)
         elif word == "handled":
             print(json.dumps({"handled": ctrl.handled, "moves": ctrl.moves}), flush=True)
         elif word == "quit":

@@ -15,12 +15,15 @@ class ReleaseInfo {
     required this.version,
     required this.page,
     this.download,
+    this.sha256,
     this.notes = '',
   });
   final String version;
   final Uri page;
   final Uri?
   download; // the Mac zip or Android APK; null when the release has no file for this device
+  final String?
+  sha256; // GitHub's published checksum of that file, when it gives one
   final String notes;
 }
 
@@ -52,16 +55,24 @@ ReleaseInfo? parseRelease(Object? json, String? assetName) {
     return null;
   }
   Uri? download;
+  String? sha256;
   for (final a in (json['assets'] as List?) ?? const []) {
     if (a is Map && a['name'] == assetName) {
       final u = Uri.tryParse(a['browser_download_url']?.toString() ?? '');
-      if (u != null && u.scheme == 'https') download = u;
+      if (u != null && u.scheme == 'https') {
+        download = u;
+        final d = a['digest']?.toString() ?? '';
+        if (RegExp(r'^sha256:[0-9a-fA-F]{64}$').hasMatch(d)) {
+          sha256 = d.substring(7).toLowerCase();
+        }
+      }
     }
   }
   return ReleaseInfo(
     version: tag.replaceFirst(RegExp(r'^[vV]'), ''),
     page: page,
     download: download,
+    sha256: sha256,
     notes: (json['body'] ?? '').toString().trim(),
   );
 }

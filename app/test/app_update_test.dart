@@ -97,6 +97,7 @@ void main() {
     AppState state(ReleaseInfo? Function() answer, List<Uri> opened) {
       final s = AppState(
         autoConnect: false,
+        selfInstall: false,
         fetchRelease: () async => answer(),
         openUrl: (u) async {
           opened.add(u);

@@ -231,6 +231,48 @@ class HttpsApiTests(unittest.TestCase):
         self.assertEqual(self.call("POST", "/api/v1/cmd", {"cmd": "/say hi"}, token=token)[1], {"output": "ok"})
         self.assertEqual(self.ctrl.handled[-1][:2], ("/say hi", "app:Test Mac"))
 
+    def test_an_invite_for_a_person_makes_the_device_theirs(self):
+        from identity import Identity
+        self.srv.pairing.identity = Identity("adam", lambda: ["sam"])
+        sam = self.srv.pairing.identity.resolve("sam")
+        code, nonce, status, reply = self.pair(self.srv.pairing.new_code("adam", sam), device="Sam's phone")
+        self.assertEqual((status, reply["user"], reply["user_kind"]), (200, "sam", "pi"))
+        token = reply["token"]
+        self.assertEqual(self.srv.devices.principal_of("Sam's phone").key, "sam")
+        self.call("POST", "/api/v1/cmd", {"cmd": "/say hi"}, token=token)
+        self.assertEqual(self.ctrl.handled[-1][:2], ("/say hi", "app:sam"))                  # the person, not the gadget
+        self.assertIn("sam (Pi login)", "\n".join(self.srv.devices.describe()))
+
+    def test_a_typed_name_cannot_take_a_real_login_but_an_app_only_name_can_register(self):
+        from identity import Identity
+        self.srv.pairing.identity = Identity("adam", lambda: ["sam"])
+        for n, typed in enumerate(("SAM", "Adam"), start=1):
+            code = self.srv.pairing.new_code("adam")                                          # no particular person
+            body = {"device": "x", "nonce": "n" * 12, "proof": client_proof(code, "n" * 12, self.seen_fingerprint()), "user": typed}
+            status, reply = self.call("POST", "/api/v1/pair", body)
+            self.assertEqual(status, 403, typed)
+            self.assertIn("login on this Pi", reply["error"])
+            self.assertEqual(self.srv.pairing.open_codes(), n)                                # the code was not used up
+        body["user"] = "Grandma Jo"
+        status, reply = self.call("POST", "/api/v1/pair", body)
+        self.assertEqual((status, reply["user"], reply["user_kind"]), (200, "Grandma Jo", "app"))
+
+    def test_the_name_an_invite_was_made_for_wins_over_the_name_typed_in_the_app(self):
+        from identity import Identity
+        self.srv.pairing.identity = Identity("adam", lambda: ["sam"])
+        jo = self.srv.pairing.identity.resolve("Grandma Jo")
+        code = self.srv.pairing.new_code("adam", jo)
+        nonce = "n" * 12
+        status, reply = self.call("POST", "/api/v1/pair", {"device": "x", "nonce": nonce, "user": "sam",
+                                                           "proof": client_proof(code, nonce, self.seen_fingerprint())})
+        self.assertEqual((status, reply["user"]), (200, "Grandma Jo"))
+
+    def test_a_device_paired_before_people_were_recorded_still_works(self):
+        code, nonce, status, reply = self.pair()
+        self.assertNotIn("user", reply)
+        self.assertIsNone(self.srv.devices.principal_of("Test Mac"))
+        self.assertIn("paired before people were recorded", "\n".join(self.srv.devices.describe()))
+
     def test_nothing_works_without_pairing(self):
         for method, path in (("GET", "/api/v1/status"), ("POST", "/api/v1/cmd"), ("GET", "/api/v1/stream"), ("GET", "/api/v1/snapshot")):
             self.assertEqual(self.call(method, path, {} if method == "POST" else None)[0], 401, path)
@@ -312,6 +354,40 @@ class RobotCommandTests(unittest.TestCase):
         for cmd in ("/pair", "/devices", "/devices remove x"):
             for role in ("viewer", "dashboard"):
                 self.assertIn("only the owner or an operator", self.ctrl.handle(cmd, by="x", role=role), (cmd, role))
+
+    def _with_pairing(self):
+        from appapi import DeviceStore, Pairing
+        from identity import Identity
+        self.ctrl.identity = Identity("adam", lambda: ["sam", "Kai"])
+        pairing = Pairing(DeviceStore(None), "ab" * 32, "Bob", identity=self.ctrl.identity)
+        self.ctrl.stream = SimpleNamespace(pairing=pairing, fingerprint="ab" * 32, devices=pairing.devices,
+                                           _httpsd=SimpleNamespace(server_address=("0.0.0.0", 8443)), stop=lambda: None)
+        return pairing
+
+    def _code_owner(self, pairing):
+        return next(iter(pairing._codes.values()))["principal"]
+
+    def test_pair_makes_an_invite_for_you_or_for_a_named_person(self):
+        pairing = self._with_pairing()
+        self.assertIn("adam (owner)", self.ctrl.handle("/pair"))
+        self.assertEqual(self._code_owner(pairing).kind, "owner")
+        self.assertIn("sam (Pi login)", self.ctrl.handle("/pair SAM"))
+        text = self.ctrl.handle("/pair Grandma Jo")
+        self.assertIn("Grandma Jo (app only)", text)
+        self.assertIn("Pi login is better", text)
+
+    def test_others_may_only_invite_themselves(self):
+        pairing = self._with_pairing()
+        self.assertIn("sam (Pi login)", self.ctrl.handle("/pair", by="sam", role="operator"))
+        self.assertIn("sam (Pi login)", self.ctrl.handle("/pair SAM", by="sam", role="operator"))
+        self.assertIn("only adam (the owner) or Kai", self.ctrl.handle("/pair kai", by="sam", role="operator"))
+        self.assertIn("only adam (the owner)", self.ctrl.handle("/pair Grandma Jo", by="sam", role="operator"))
+        self.assertEqual(pairing.open_codes(), 2)                                              # the refusals made no codes
+
+    def test_odd_names_are_refused(self):
+        pairing = self._with_pairing()
+        self.assertIn("can't do that", self.ctrl.handle("/pair <script>"))
+        self.assertEqual(pairing.open_codes(), 0)
 
     def test_claude_has_no_way_to_pair_a_device(self):
         self.assertFalse({t["name"] for t in self.ctrl.brain.tools if "pair" in t["name"] or "device" in t["name"]})
