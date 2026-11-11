@@ -210,6 +210,9 @@ heartbeat_every_s = 60.0
 cooldown_s = 300.0         # least time between two notifications of the same kind
 notify = ["restart", "estop", "camera", "power", "update", "vitals"]   # also: "start", "stopped"
 
+[update]
+channel = "commit"         # what /update installs: "commit" = the latest commit on main (newest, may be half-finished); "release" = the newest numbered release only (manual 23)
+
 [colors]
 enabled = true             # /color and Claude's see_colors tool: which colours the camera sees and where (manual 28). Only looks
 min_percent = 1.0          # a colour's biggest patch must fill at least this % of the picture

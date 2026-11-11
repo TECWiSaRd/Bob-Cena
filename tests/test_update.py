@@ -310,5 +310,91 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(subprocess.run(["bash", str(script), "--nonsense"], capture_output=True, text=True).returncode, 2)
 
 
+class ReleaseChannelTests(RepoCase):
+    """[update] channel = "release": follow the newest numbered tag, not the newest commit."""
+
+    def setUp(self):
+        super().setUp()
+        self.rel = Updater(self.pi, channel="release")
+
+    def tag(self, name):
+        git(self.mac, "tag", name)
+        git(self.mac, "push", "-q", "origin", name)
+
+    def test_it_installs_the_release_and_ignores_later_commits(self):
+        self.push("good.py", "X = 2\n", "Release work")
+        self.tag("26.11")
+        self.push("good.py", "X = 3\n", "Half finished after the release")
+        ok, text, behind = self.rel.status()
+        self.assertEqual((ok, behind), (True, 1))
+        self.assertIn("release 26.11", text)
+        self.assertNotIn("Half finished", text)
+        ok, text, changed = self.rel.apply()
+        self.assertEqual((ok, changed), (True, True))
+        self.assertEqual((self.pi / "good.py").read_text(), "X = 2\n")
+        self.assertEqual(self.rel.status()[2], 0)                                # up to date with the release
+        self.assertEqual(self.up.status()[2], 1)                                 # the commit channel still sees the newer commit
+
+    def test_the_newest_number_wins_not_the_newest_name_alphabetically(self):
+        for name, text in (("26.9", "9"), ("26.10", "10"), ("26.10.1", "101"), ("26.2", "2")):
+            self.push("good.py", f"X = {text}\n", name)
+            self.tag(name)
+        self.push("good.py", "X = 0\n", "later")
+        self.tag("backup")                                                      # not a version: ignored
+        self.tag("26.12-beta")
+        self.assertTrue(self.rel.apply()[0])
+        self.assertEqual((self.pi / "good.py").read_text(), "X = 101\n")      # 26.10.1 is the highest number, though 26.2 was tagged last
+
+    def test_a_copy_newer_than_the_latest_release_stays_put(self):
+        self.tag("26.10")
+        self.push("good.py", "X = 5\n", "Newer than the release")
+        self.assertTrue(self.up.apply()[0])                                      # the Pi follows commits for a while
+        before = git(self.pi, "rev-parse", "HEAD")
+        ok, text, behind = self.rel.status()
+        self.assertEqual((ok, behind), (True, 0))
+        ok, text, changed = self.rel.apply()
+        self.assertEqual((ok, changed), (True, False))
+        self.assertEqual(git(self.pi, "rev-parse", "HEAD"), before)             # never goes backwards
+
+    def test_no_release_yet_says_so_and_changes_nothing(self):
+        self.push("good.py", "X = 2\n", "A commit")
+        before = git(self.pi, "rev-parse", "HEAD")
+        ok, text, behind = self.rel.status()
+        self.assertFalse(ok)
+        self.assertIn("no numbered release", text)
+        self.assertEqual(self.rel.apply()[:3:2], (False, False))
+        self.assertEqual(git(self.pi, "rev-parse", "HEAD"), before)
+
+    def test_a_detached_copy_is_moved_onto_the_release(self):
+        git(self.pi, "checkout", "-q", "--detach")
+        self.push("good.py", "X = 2\n", "Release work")
+        self.tag("26.11")
+        self.push("good.py", "X = 3\n", "After")
+        ok, text, changed = self.rel.apply()
+        self.assertEqual((ok, changed), (True, True))
+        self.assertEqual(git(self.pi, "rev-parse", "HEAD"), git(self.mac, "rev-parse", "26.11^{commit}"))
+        self.assertEqual(git(self.pi, "rev-parse", "--abbrev-ref", "HEAD"), "main")
+
+    def test_a_bad_release_is_rolled_back(self):
+        before = git(self.pi, "rev-parse", "HEAD")
+        self.push("broken.py", "def oops(:\n", "Broken")
+        self.tag("26.11")
+        ok, text, changed = self.rel.apply()
+        self.assertEqual((ok, changed), (False, False))
+        self.assertEqual(git(self.pi, "rev-parse", "HEAD"), before)
+
+    def test_the_setting_is_read_and_a_typo_is_refused(self):
+        self.assertEqual(config.Config().update.channel, "commit")
+        self.assertEqual(Updater(self.pi, channel="Release").channel, "release")
+        self.assertEqual(Updater(self.pi, channel="nonsense").channel, "commit")
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.toml"
+            path.write_text('[update]\nchannel = "release"\n')
+            self.assertEqual(config.load(path).update.channel, "release")
+            path.write_text('[update]\nchannel = "relase"\n')
+            with self.assertRaises(ValueError):
+                config.load(path)
+
+
 if __name__ == "__main__":
     unittest.main()

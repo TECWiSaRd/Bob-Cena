@@ -88,6 +88,21 @@ anything is wrong**. If files here were changed by hand it refuses rather than o
 quits and the service starts the new code a few seconds later; started by hand, he tells you to restart him yourself.
 Claude cannot update Bob.
 
+### Latest commit or latest release?
+
+By default `/update` follows the **latest commit** on `main`: you get changes as soon as they are pushed, including ones that are
+still being tested. To install only finished, numbered **releases** (26.11, 26.12, ...), put this in `config.local.toml`:
+
+```toml
+[update]
+channel = "release"     # or "commit" (the default)
+```
+
+Then `/update` looks for the newest release tag on GitHub and installs that, and ignores commits made after it. Either way Bob only
+moves **forward**: if this copy is already newer than the latest release he says so and changes nothing. Switching back to `commit`
+catches up to `main` the next time you run `/update`. (This is about Bob's code on the Pi. The Bob app has its own update button
+under More, App updates, and always uses the latest release.)
+
 **Push from your Mac first.** `/update` installs what is on GitHub, so commit and push there, then `/update` on the Pi.
 
 ## Troubleshooting

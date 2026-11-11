@@ -286,6 +286,11 @@ class AlertsConfig:
 
 
 @dataclass
+class UpdateConfig:
+    channel: str = "commit"      # what /update follows: "commit" = the latest commit on main; "release" = the newest numbered release (manual 23)
+
+
+@dataclass
 class SleepConfig:
     enabled: bool = False        # follow the schedule below (/sleep on|off works either way)
     start: str = "23:00"         # asleep from...
@@ -346,6 +351,7 @@ class Config:
     power: PowerConfig = field(default_factory=PowerConfig)
     startup: StartupConfig = field(default_factory=StartupConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    update: UpdateConfig = field(default_factory=UpdateConfig)
     sleep: SleepConfig = field(default_factory=SleepConfig)
     faces: FacesConfig = field(default_factory=FacesConfig)
     colors: ColorsConfig = field(default_factory=ColorsConfig)
@@ -367,6 +373,7 @@ CHOICES = {
     ("brain", "think_when"): ("interval", "change"),
     ("music", "airplay_bus"): ("session", "system"),
     ("home", "tag_family"): ("tag36h11", "tag25h9", "aruco4x4_50"),
+    ("update", "channel"): ("commit", "release"),
     ("brain", "effort"): ("low", "medium", "high", "xhigh", "max"),
 }
 

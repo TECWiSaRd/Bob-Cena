@@ -185,7 +185,7 @@ class Controller:
         self.quit = threading.Event()
         self._check_lock = threading.Lock()
         self.identity = Identity(getpass.getuser())          # the account Bob runs as is the owner
-        self.updater = Updater(BASE)
+        self.updater = Updater(BASE, channel=cfg.update.channel)
         self.alerts = Alerts(cfg.alerts, cfg.radio.name, os.environ.get("HEARTBEAT_URL", ""), os.environ.get("NOTIFY_URL", ""), BASE)
         self._update_pending: dict[str, float] = {}
         self.restart_requested = False       # set by a confirmed /update: Bob quits and the service starts the new code

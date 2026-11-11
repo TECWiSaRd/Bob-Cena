@@ -266,6 +266,14 @@ See [Memory and people](14-memory-and-people.md).
 | `max_rows` | 200000 | a safety net on the index's size; the oldest history goes first |
 | `ai` | false | let Claude search past timeline and radio records (`recall`). Live: `/index ai on` |
 
+## `[update]`: what `/update` installs
+
+See [Alerts, versions and updates](23-alerts-and-updates.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `channel` | commit | `commit` installs the latest commit on `main`; `release` installs only the newest numbered release (26.11, 26.12, ...). Either way Bob only moves forward |
+
 ## `[faces]`: recognising people who agreed
 
 See [Face recognition](26-face-recognition.md).
