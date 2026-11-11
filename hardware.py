@@ -149,9 +149,10 @@ class DcMotor:
     motor's final power, so drift correction still works at low speeds.
     """
 
-    def __init__(self, pwm_pin: int, in1_pin: int, in2_pin: int, cfg, trim_key: str):
+    def __init__(self, pwm_pin: int, in1_pin: int, in2_pin: int, cfg, trim_key: str, invert: bool = False):
         from gpiozero import DigitalOutputDevice
         self._cfg, self._trim_key = cfg, trim_key  # read live, so /minduty and /trim apply at once
+        self._invert = invert                      # a wheel mounted the other way round (the rear wheels of a four-wheeler)
         self._devs: list = []
         self._value = None
         self._dir = 0
@@ -185,7 +186,7 @@ class DcMotor:
             self._pwm.set(0.0)
             self._in1.value = self._in2.value = bool(self._cfg.dc_brake)  # brake: both high; coast: both low
             return
-        v = clamp(v, -1.0, 1.0)
+        v = clamp(-v if self._invert else v, -1.0, 1.0)
         direction = 1 if v > 0 else -1
         if direction != self._dir:
             # IN1/IN2 change one at a time and pass through short-brake; with the PWM at zero that is harmless.
@@ -204,35 +205,95 @@ class DcMotor:
             self._release()
 
 
+class MotorGroup:
+    """Several motors on one side that always get the same command (the front and rear wheel of a four-wheeler)."""
+
+    def __init__(self, motors):
+        self.motors = list(motors)
+
+    @property
+    def value(self):
+        return self.motors[0].value
+
+    @value.setter
+    def value(self, v):
+        for motor in self.motors:
+            motor.value = v
+
+    def close(self) -> None:
+        for motor in self.motors:
+            motor.close()
+
+
+def rear_pins(cfg, side: str):
+    """The rear wheel's (pwm, in1, in2) pins for 'left' or 'right', or None when it is wired in parallel with the front wheel."""
+    pins = tuple(getattr(cfg, f"dc_rear_{side}_{name}") for name in ("pwm", "in1", "in2"))
+    if all(p < 0 for p in pins):
+        return None
+    if any(p < 0 for p in pins):
+        raise ValueError(f"the rear {side} wheel needs all three of dc_rear_{side}_pwm, _in1 and _in2 (or none of them, for a parallel wire)")
+    return pins
+
+
 class Tb6612:
-    """TB6612FNG motor driver: two motors plus the standby pin that powers the outputs down."""
+    """TB6612FNG motor driver: two motors plus the standby pin that powers the outputs down.
+
+    With dc_wheels = 4 a second board drives the rear wheels. If its control wires run in parallel with the first board's, nothing
+    more is needed here; if a rear wheel has its own pins (dc_rear_*), it is driven together with the front wheel on its side."""
 
     def __init__(self, cfg):
         from gpiozero import DigitalOutputDevice
-        self._stby = self.left = self.right = None
+        if cfg.dc_wheels not in (2, 4):
+            raise ValueError(f"dc_wheels must be 2 or 4, not {cfg.dc_wheels}")
+        self._stby = self._rear_stby = self.left = self.right = None
+        self._motors: list = []
         try:
+            rear_l = rear_pins(cfg, "left") if cfg.dc_wheels == 4 else None
+            rear_r = rear_pins(cfg, "right") if cfg.dc_wheels == 4 else None
             self._stby = DigitalOutputDevice(cfg.dc_standby, initial_value=False)  # low = outputs off
-            self.left = DcMotor(cfg.dc_left_pwm, cfg.dc_left_in1, cfg.dc_left_in2, cfg, "left_trim")
-            self.right = DcMotor(cfg.dc_right_pwm, cfg.dc_right_in1, cfg.dc_right_in2, cfg, "right_trim")
+            if cfg.dc_wheels == 4 and cfg.dc_rear_standby >= 0:
+                self._rear_stby = DigitalOutputDevice(cfg.dc_rear_standby, initial_value=False)
+            left = DcMotor(cfg.dc_left_pwm, cfg.dc_left_in1, cfg.dc_left_in2, cfg, "left_trim")
+            self._motors.append(left)
+            right = DcMotor(cfg.dc_right_pwm, cfg.dc_right_in1, cfg.dc_right_in2, cfg, "right_trim")
+            self._motors.append(right)
+            lefts, rights = [left], [right]
+            if rear_l:
+                lefts.append(DcMotor(*rear_l, cfg, "left_trim", invert=cfg.rear_left_invert))
+                self._motors.append(lefts[-1])
+            if rear_r:
+                rights.append(DcMotor(*rear_r, cfg, "right_trim", invert=cfg.rear_right_invert))
+                self._motors.append(rights[-1])
+            self.left = MotorGroup(lefts) if len(lefts) > 1 else left
+            self.right = MotorGroup(rights) if len(rights) > 1 else right
             self.standby(True)
         except Exception:
             self.close()  # free whatever was claimed so a retry doesn't hit "pin in use"
             raise
-        log.info("TB6612FNG ready (left PWM GPIO%d, right PWM GPIO%d, STBY GPIO%d)",
-                 cfg.dc_left_pwm, cfg.dc_right_pwm, cfg.dc_standby)
+        if cfg.dc_wheels == 4:
+            how = "; rear boards on their own pins" if (rear_l or rear_r) else "; rear board wired in parallel with the front one"
+            log.info("TB6612FNG ready, four wheels (left PWM GPIO%d, right PWM GPIO%d, STBY GPIO%d%s)",
+                     cfg.dc_left_pwm, cfg.dc_right_pwm, cfg.dc_standby, how)
+        else:
+            log.info("TB6612FNG ready (left PWM GPIO%d, right PWM GPIO%d, STBY GPIO%d)",
+                     cfg.dc_left_pwm, cfg.dc_right_pwm, cfg.dc_standby)
 
     def standby(self, on: bool) -> None:
-        """on=True enables the outputs; False cuts power to both motors."""
-        self._stby.value = bool(on)
+        """on=True enables the outputs; False cuts power to every motor on every board."""
+        for pin in (self._stby, self._rear_stby):
+            if pin is not None:
+                pin.value = bool(on)
 
     def close(self) -> None:
-        for motor in (self.left, self.right):
-            if motor is not None:
-                motor.close()
-        if self._stby is not None:
-            self.standby(False)
-            self._stby.close()
-            self._stby = None
+        for motor in self._motors:
+            motor.close()
+        self._motors = []
+        for name in ("_stby", "_rear_stby"):
+            pin = getattr(self, name)
+            if pin is not None:
+                pin.value = False
+                pin.close()
+                setattr(self, name, None)
 
 
 class Drive:

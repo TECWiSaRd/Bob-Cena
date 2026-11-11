@@ -155,6 +155,10 @@ All under `[drive]` in `config.toml`. Details: [settings reference](15-settings-
 | `dc_brake` | true | brake (true) or coast (false) |
 | `dc_pwm_hz` | 20000 | motor switching speed (above hearing) |
 | `dc_left_pwm`, `dc_left_in1`, ... `dc_standby` | 12, 5, 6, 13, 16, 20, 21 | motor driver pins |
+| `dc_wheels` | 2 | 2, or 4 with a second TB6612FNG for the rear wheels (wiring in manual 01) |
+| `dc_rear_left_pwm`, `_in1`, `_in2`, `dc_rear_right_...` | -1 | rear wheels on their own pins; -1 = wired in parallel with the front board |
+| `dc_rear_standby` | -1 | the second board's STBY pin; -1 = joined to the front STBY |
+| `rear_left_invert` / `rear_right_invert` | false | a rear wheel that turns the opposite way to the front one |
 | `estop_button_pin` | -1 | physical stop button pin; -1 = none |
 
 ## Troubleshooting

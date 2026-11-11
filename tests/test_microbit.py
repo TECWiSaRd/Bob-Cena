@@ -239,6 +239,121 @@ class PortTests(unittest.TestCase):
             os.listdir = real
 
 
+class FakeBleak:
+    """A pretend bleak: one micro:bit that can be found, connected to, written to, and made to talk or vanish."""
+
+    def __init__(self, devices=(("BBC micro:bit [tupaz]", "AA:BB:CC:DD:EE:01"),)):
+        outer = self
+        self.devices, self.written, self.notify, self.connected = list(devices), [], None, False
+        self.disconnected = None
+
+        class Scanner:
+            @staticmethod
+            async def find_device_by_filter(match, timeout=None):
+                for name, addr in outer.devices:
+                    dev = SimpleNamespace(name=name, address=addr)
+                    if match(dev, SimpleNamespace(local_name=name)):
+                        return dev
+                return None
+
+        class Client:
+            def __init__(self, dev, disconnected_callback=None):
+                outer.disconnected = disconnected_callback
+                self.dev = dev
+
+            async def connect(self):
+                outer.connected = True
+
+            async def start_notify(self, uuid, cb):
+                assert uuid == microbit.UART_TX
+                outer.notify = cb
+
+            async def write_gatt_char(self, uuid, data, response=True):
+                assert uuid == microbit.UART_RX and response is False
+                outer.written.append(bytes(data))
+
+            async def disconnect(self):
+                outer.connected = False
+
+        self.BleakScanner, self.BleakClient = Scanner, Client
+
+
+class BluetoothTests(unittest.TestCase):
+    def link(self, fake, **kw):
+        return microbit.BleLink(bleak=fake, **kw)
+
+    def test_finds_connects_reads_and_writes(self):
+        fake = FakeBleak()
+        link = self.link(fake, name="tupaz").open()
+        try:
+            self.assertTrue(fake.connected)
+            fake.notify(None, bytearray(b"M\n"))
+            self.assertEqual(link.read(256), b"M\n")
+            self.assertEqual(link.read(256), b"")
+            link.write(b"MODE drive\n")
+            self.assertEqual(fake.written, [b"MODE drive\n"])
+        finally:
+            link.close()
+        self.assertFalse(fake.connected)
+
+    def test_the_name_must_match_and_an_address_wins(self):
+        fake = FakeBleak([("BBC micro:bit [other]", "AA:BB:CC:DD:EE:02"), ("Some speaker", "AA:BB:CC:DD:EE:03")])
+        with self.assertRaises(OSError):
+            self.link(fake, name="tupaz").open()
+        link = self.link(fake, address="aa:bb:cc:dd:ee:02").open()    # case does not matter
+        link.close()
+        self.assertTrue(self.link(FakeBleak(), name="").matches("BBC micro:bit [x]", None))
+        self.assertFalse(self.link(FakeBleak(), name="").matches("Some speaker", None))
+
+    def test_losing_the_link_is_an_error_for_the_reader(self):
+        fake = FakeBleak()
+        link = self.link(fake).open()
+        try:
+            fake.disconnected(None)
+            with self.assertRaises(OSError):
+                link.read(256)
+            with self.assertRaises(OSError):
+                link.write(b"x")
+        finally:
+            link.close()
+
+    def test_the_whole_thread_over_bluetooth_and_the_wheels_stop_when_it_drops(self):
+        fake = FakeBleak()
+        ctrl = FakeCtrl()
+        cfg = config.MicrobitConfig(enabled=True, transport="ble", ble_name="tupaz")
+        mb = MicroBit(cfg, ctrl)
+        real = microbit.BleLink
+        microbit.BleLink = lambda n, a: real(n, a, bleak=fake)
+        try:
+            attempts = []
+            orig_open = mb._open
+
+            def opener(path):
+                attempts.append(path)
+                if len(attempts) > 1:
+                    mb.halt.set()
+                    raise OSError("stop")
+                link = orig_open(path)
+                fake.notify(None, bytearray(b"M\n"))
+                fake.notify(None, bytearray(b"D 0 100\n"))
+                threading.Timer(0.3, lambda: fake.disconnected(None)).start()
+                return link
+
+            mb._open = opener
+            mb.halt.wait = lambda t=None: None
+            mb.run()
+        finally:
+            microbit.BleLink = real
+        self.assertEqual(attempts[0], "bluetooth")
+        self.assertEqual(ctrl.moves, [(0.6, 0.6, 0.4)])
+        self.assertIn("MODE drive\n", [w.decode() for w in fake.written])
+        self.assertGreaterEqual(ctrl.stops, 1)
+
+    def test_an_unknown_transport_is_refused(self):
+        with self.assertRaises(ValueError):
+            MicroBit(config.MicrobitConfig(enabled=True, transport="smoke"), FakeCtrl())
+
+
 class ConfigTests(unittest.TestCase):
     def test_shipped_config_is_off_and_safe(self):
         cfg = config.load(Path(__file__).resolve().parent.parent / "config.toml")

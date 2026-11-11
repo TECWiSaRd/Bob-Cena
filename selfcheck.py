@@ -46,7 +46,7 @@ def run_checks(ctrl, base: Path, run=_run, read=_read, which=shutil.which) -> li
     elif drive.estop.is_set():
         add(WARN, "motors", "ready, but the EMERGENCY STOP is on: /clear releases it")
     else:
-        add(OK, "motors", f"{ctrl.cfg.drive.type} drive ready; speed cap {drive.speed_cap:.2f}")
+        add(OK, "motors", f"{ctrl.cfg.drive.type} drive ready{', four wheels' if ctrl.cfg.drive.type == 'dc' and ctrl.cfg.drive.dc_wheels == 4 else ''}; speed cap {drive.speed_cap:.2f}")
 
     cam = ctrl.camera
     if not cam.available:

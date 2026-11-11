@@ -53,6 +53,10 @@ See [Driving and motors](05-driving-and-motors.md).
 | `dc_pwm_hz` | 20000 | how fast the motor power switches. Above hearing, so no whine |
 | `dc_min_duty` | 0.25 | the lowest power that actually turns the wheels. Live: `/minduty` |
 | `dc_brake` | true | `true` = stopped motors resist turning; `false` = they coast |
+| `dc_wheels` | 2 | `2`, or `4` when a second TB6612FNG drives the rear wheels (manual 01). A side's two wheels move together |
+| `dc_rear_left_pwm` / `_in1` / `_in2`, `dc_rear_right_pwm` / `_in1` / `_in2` | -1 | the rear wheels' own pins. All -1 = the second board is wired in parallel with the first. Give a side all three or none |
+| `dc_rear_standby` | -1 | the second board's STBY pin; -1 = joined to the first board's |
+| `rear_left_invert` / `rear_right_invert` | false | flip a rear wheel that turns the wrong way |
 | `estop_button_pin` | -1 | GPIO of a physical stop button (to ground). -1 = none |
 | `pwm` | `"auto"` | servo only: `"auto"`, `"hardware"`, `"pigpio"` or `"software"` |
 | `left_pin`, `right_pin` | 12, 13 | servo only: GPIO for each servo's signal wire |

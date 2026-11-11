@@ -1,8 +1,10 @@
 """Drive Bob with a BBC micro:bit.
 
-Plug a micro:bit into the Pi by USB (it shows up as a serial port) running microbit/bob_remote.py, or plug in a second micro:bit
-running microbit/bob_bridge.py and carry the handheld one around: they talk by the micro:bit's own radio. Either way the Pi hears
-short text lines, one per line, 115200 baud:
+Three ways to connect (see manual 27):
+  - USB: plug a micro:bit running microbit/bob_remote.py into the Pi (it shows up as a serial port)
+  - radio: plug in a second micro:bit running microbit/bob_bridge.py and carry the handheld one around
+  - Bluetooth (transport = "ble"): a V2 micro:bit running microbit/bob_remote_ble.ts talks straight to the Pi's own Bluetooth
+Either way the Pi hears short text lines, one per line (USB/radio at 115200 baud):
 
     D x y [key]   tilt: x = turn, y = forward, each -100..100. Sent only while the A button is held (a dead man's switch)
     M [key]       tap B: switch manual driving on or off (turning it on pauses the AI)
@@ -20,8 +22,10 @@ needs no key, and why a `key` (a short word that the micro:bit program also know
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import queue
 import threading
 import time
 
@@ -32,6 +36,12 @@ QUIET_S = 0.6              # no message for this long while moving: stop now rat
 MAX_LINE = 64              # longer lines are noise
 WHO = "microbit"           # the micro:bit is its own driver, like the controller
 TILT = 100.0
+
+# Nordic UART service: what the micro:bit's Bluetooth UART looks like. "TX" is micro:bit -> Pi (notifications), "RX" is Pi -> micro:bit.
+UART_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+UART_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+BLE_SCAN_S = 8.0
+BLE_CONNECT_S = 15.0
 
 
 def find_devices() -> list[str]:
@@ -68,9 +78,82 @@ def parse(line: str):
     return None
 
 
+class BleLink:
+    """A Bluetooth connection to a micro:bit that looks like a serial port: read(n) / write(bytes) / close().
+
+    bleak (the Bluetooth library) is asynchronous, so it gets its own thread with its own event loop; the rest of Bob stays
+    simple and blocking. [bleak] is a parameter so tests can hand in a pretend one."""
+
+    def __init__(self, name: str = "", address: str = "", bleak=None):
+        self.name, self.address = name.strip().lower(), address.strip().lower()
+        self._bleak = bleak
+        self._q: queue.Queue = queue.Queue()
+        self._gone = threading.Event()
+        self._client = None
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._loop.run_forever, name="microbit-ble", daemon=True)
+
+    def matches(self, name: str | None, address: str | None) -> bool:
+        """Is this advertisement the micro:bit we want? An address wins; else the name must contain what was asked for."""
+        if self.address:
+            return (address or "").lower() == self.address
+        n = (name or "").lower()
+        return n.startswith("bbc micro:bit") and self.name in n
+
+    async def _connect(self) -> None:
+        bleak = self._bleak
+        if bleak is None:
+            import bleak                                           # imported late so tests and a Mac don't need it
+        found = await bleak.BleakScanner.find_device_by_filter(
+            lambda dev, adv: self.matches(getattr(adv, "local_name", None) or dev.name, dev.address), timeout=BLE_SCAN_S)
+        if found is None:
+            raise OSError("no micro:bit found over Bluetooth (is it on, and not already connected to a phone?)")
+        client = bleak.BleakClient(found, disconnected_callback=lambda _c: self._gone.set())
+        await client.connect()
+        await client.start_notify(UART_TX, lambda _s, data: self._q.put(bytes(data)))
+        self._client = client
+
+    def open(self) -> "BleLink":
+        self._thread.start()
+        try:
+            asyncio.run_coroutine_threadsafe(self._connect(), self._loop).result(BLE_SCAN_S + BLE_CONNECT_S)
+        except Exception as e:
+            self.close()
+            raise OSError(str(e) or e.__class__.__name__) from e
+        return self
+
+    def read(self, n: int) -> bytes:
+        try:
+            return self._q.get(timeout=0.05)
+        except queue.Empty:
+            if self._gone.is_set():
+                raise OSError("Bluetooth link lost")
+            return b""
+
+    def write(self, data: bytes) -> None:
+        if self._gone.is_set() or self._client is None:
+            raise OSError("Bluetooth link lost")
+        asyncio.run_coroutine_threadsafe(self._client.write_gatt_char(UART_RX, data, response=False), self._loop).result(2.0)
+
+    def close(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(client.disconnect(), self._loop).result(3.0)
+            except Exception:
+                pass
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread.is_alive():
+            self._thread.join(timeout=3.0)
+        if not self._thread.is_alive() and not self._loop.is_closed():
+            self._loop.close()
+
+
 class MicroBit(threading.Thread):
     def __init__(self, cfg, ctrl, find=find_devices, opener=None, clock=time.monotonic):
         super().__init__(name="microbit", daemon=True)
+        if cfg.transport not in ("usb", "ble"):
+            raise ValueError(f'[microbit] transport must be "usb" or "ble", not {cfg.transport!r}')
         self.cfg, self.ctrl, self._find, self._clock = cfg, ctrl, find, clock
         self._open = opener or self._open_serial
         self.halt = threading.Event()
@@ -166,10 +249,14 @@ class MicroBit(threading.Thread):
 
     # ---- the port -----------------------------------------------------------------------------------------------
     def _open_serial(self, path: str):
+        if self.cfg.transport == "ble":
+            return BleLink(self.cfg.ble_name, self.cfg.ble_address).open()
         import serial                                              # pyserial: imported late so tests and a Mac don't need it
         return serial.Serial(path, self.cfg.baud, timeout=0.05)
 
     def _wanted(self) -> list[str]:
+        if self.cfg.transport == "ble":
+            return ["bluetooth"]
         if self.cfg.device and self.cfg.device != "auto":
             return [self.cfg.device]
         return self._find()
@@ -206,7 +293,8 @@ class MicroBit(threading.Thread):
                 break
             if port is None:
                 if not waited:
-                    log.info("micro:bit: waiting for one (plug it in by USB, or plug in the bridge micro:bit)")
+                    log.info("micro:bit: waiting for one (%s)",
+                             "switch it on, within a few metres" if self.cfg.transport == "ble" else "plug it in by USB, or plug in the bridge micro:bit")
                     waited = True
                 self.halt.wait(2.0)
                 continue

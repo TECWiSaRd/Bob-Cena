@@ -56,7 +56,8 @@ Python (top level, stdlib + `anthropic`; hardware libs come from apt on the Pi a
 | `access.py` | per-person Wi-Fi-scoped tokens (`TOKEN_NAME`, `WIFI[ssid]=NAME`), lockout |
 | `remote.py` / `console.py` | shared console over a unix socket (SO_PEERCRED + groups `bobops`/`bobview`); curses UI; stderr capture |
 | `power.py` / `update.py` / `version.py` | two-step `/shutdown`; `/update` from GitHub (git checkout, rollback); code fingerprints |
-| `microbit.py` | drive with a BBC micro:bit over USB serial (or a radio bridge): `D x y` while A held, `M`, `E`, `T`, `C`; optional key; programs in `microbit/` (manual 27; not tested on hardware) |
+| `colors.py` | named colour patches in the camera picture (HSV masks, biggest blob per colour, bearing); `/color`, Claude's read-only `see_colors` tool (manual 28; tested with synthetic pictures only) |
+| `microbit.py` | drive with a BBC micro:bit over USB serial, a radio bridge, or Bluetooth LE (`BleLink`, bleak, Nordic UART): `D x y` while A held, `M`, `E`, `T`, `C`; optional key; programs in `microbit/` (manual 27; not tested on hardware) |
 | `faces.py` | opt-in face recognition (SFace via OpenCV): embeddings only in `faces.json`, two-step `/face remember`, `/face improve`, no Claude tool (manual 26) |
 | `identity.py` | who a person is: owner / Pi login / app-only, case-insensitive; who may invite whom (26.12 phase A, in progress) |
 | `alerts.py` | heartbeat (dead man's switch) + ntfy-style push messages; unclean-stop detection |

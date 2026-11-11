@@ -24,6 +24,19 @@ dc_pwm_hz = 20000
 dc_min_duty = 0.25         # raise if motors hum without turning at low speed
 dc_brake = true            # false = coast to a stop
 
+# Four wheels with a second TB6612FNG (manual 05). Easiest: wire the second board's PWMA/AIN1/AIN2/PWMB/BIN1/BIN2/STBY to the SAME
+# Pi pins as the first (in parallel), set dc_wheels = 4 and leave the rear pins at -1. Or give a rear wheel its own pins (all three of a side).
+dc_wheels = 2
+dc_rear_left_pwm = -1
+dc_rear_left_in1 = -1
+dc_rear_left_in2 = -1
+dc_rear_right_pwm = -1
+dc_rear_right_in1 = -1
+dc_rear_right_in2 = -1
+dc_rear_standby = -1       # -1 = the rear STBY is joined to the front STBY wire
+rear_left_invert = false   # a rear wheel that turns the opposite way to the front wheel on its side
+rear_right_invert = false
+
 estop_button_pin = -1      # e.g. 26 for a button between GPIO26 and GND
 
 [camera]
@@ -180,7 +193,10 @@ btn_drive = 7
 
 [microbit]
 enabled = false            # true = drive with a BBC micro:bit (manual 27). Hold A and tilt = drive, B = manual on/off, A+B = emergency stop
-device = "auto"            # finds a micro:bit by its USB name, or a path such as "/dev/ttyACM0"
+transport = "usb"          # "usb" (cable or radio bridge) or "ble" (Bluetooth straight to a V2 micro:bit, manual 27)
+device = "auto"            # usb: finds a micro:bit by its USB name, or a path such as "/dev/ttyACM0"
+ble_name = ""              # ble: the five letters in its name, "BBC micro:bit [tupaz]" -> "tupaz". Empty = any micro:bit (not advised)
+ble_address = ""           # ble: or its Bluetooth address (wins over the name)
 baud = 115200
 deadzone = 0.2
 speed = 0.6                # full tilt = this fraction of the speed cap
@@ -193,6 +209,15 @@ enabled = false            # tell you when something is wrong; needs HEARTBEAT_U
 heartbeat_every_s = 60.0
 cooldown_s = 300.0         # least time between two notifications of the same kind
 notify = ["restart", "estop", "camera", "power", "update", "vitals"]   # also: "start", "stopped"
+
+[colors]
+enabled = true             # /color and Claude's see_colors tool: which colours the camera sees and where (manual 28). Only looks
+min_percent = 1.0          # a colour's biggest patch must fill at least this % of the picture
+min_saturation = 90        # 0-255; duller than this is not called a colour. Lower it for pale or dim light
+min_value = 60             # 0-255; darker than this is not given a colour
+white_saturation = 40
+white_value = 190
+black_value = 45
 
 [faces]
 enabled = false            # recognise people who asked to be remembered: /face remember NAME (manual 26). Numbers only, no photos

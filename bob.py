@@ -37,6 +37,7 @@ from sensors import RangeSensor
 from calibrate import Calibrator
 from identity import Identity, IdentityError
 from faces import FaceBook, FaceService, SFaceBackend
+from colors import NAMES as COLOR_NAMES, ColorFinder
 from vision import FaceDetector, Follower
 from access import AccessPolicy
 from stream import StreamServer
@@ -71,6 +72,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /update               owner only: show what is new on GitHub; /update confirm installs it and restarts Bob
   /pair [NAME]          a one-time code to add a phone or computer to the Bob app, for you or (owner only) for NAME; /devices lists them (manual 23)
   /face                 who Bob recognises (off by default): /face remember NAME, /face improve NAME, /face forget NAME|all, /face on|off (manual 26)
+  /color [NAME|center]  which colours the camera sees and where; /color red finds red; /color center shows the middle's HSV for tuning (manual 28)
   /usage                what Claude has cost, all time (today, 7 days, month, per model)
   /resume               start autonomous AI ticks again (/think on|off also works)
   /model opus|sonnet|haiku   switch Claude model live (haiku is ~40x cheaper than opus)
@@ -231,7 +233,13 @@ class Controller:
         self.people = People(BASE / "people.json")
         self.faces = FaceService(cfg.faces, FaceBook(BASE / "faces.json", cfg.faces.max_people, cfg.faces.max_samples),
                                  lambda: SFaceBackend(BASE / "models"))
-        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home, sleep_cfg=cfg.sleep, faces=self.faces)
+        self.colors = None
+        if cfg.colors.enabled:
+            try:
+                self.colors = ColorFinder(cfg.colors, cfg.camera.fov_deg)
+            except Exception as e:                     # no OpenCV or numpy: Bob works without colour finding
+                log.warning("Colour finding unavailable (%s)", e)
+        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home, sleep_cfg=cfg.sleep, faces=self.faces, colors=self.colors)
         self.brain.timeline = self.timeline
 
     def _make_radio(self, rc):
@@ -456,6 +464,23 @@ class Controller:
                 return faces.forget_all()
             return faces.forget(rest) if rest else "usage: /face forget <name> | all"
         return "usage: /face [remember NAME | remember confirm | improve NAME | forget NAME|all | on | off]"
+
+    def color_command(self, arg: str) -> str:
+        """/color: what colours the camera sees (read-only; it never moves Bob)."""
+        if self.colors is None:
+            return "colour finding is off or unavailable ([colors] enabled in config.toml; it needs OpenCV)"
+        if not self.camera.enabled:
+            return "the camera is off: /camera on"
+        word = arg.strip().lower()
+        if word in ("center", "centre"):
+            frame = self.camera.grab_bgr()
+            if frame is None:
+                return "camera unavailable"
+            h, s, v, name = self.colors.centre(frame)
+            return f"the middle of the picture: hue {h} (0-179), saturation {s}, value {v} (0-255): {name}"
+        if word and word != "any" and word not in COLOR_NAMES:
+            return f"usage: /color [{'|'.join(COLOR_NAMES)}|center]"
+        return self.brain.colors_report(word or "any")
 
     def pair_command(self, name: str, by: str | None, role: str) -> str:
         """/pair [NAME]: a one-time invite for adding a phone or computer to the Bob app, for one particular person.
@@ -911,6 +936,8 @@ class Controller:
                 return self.update_command(arg.lower().split(), by, role)
             case "face" | "faces":
                 return self.face_command(arg, by, role)
+            case "color" | "colour" | "colors" | "colours":
+                return self.color_command(arg)
             case "usage" | "cost":
                 return self.controls.usage.report(c.cost)
             case "think":

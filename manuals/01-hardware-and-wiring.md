@@ -89,6 +89,31 @@ Breakout boards usually have several GND pins. They are all connected inside the
 - **STBY** switches the whole board on and off. Bob holds it high while running and pulls it low on an
   emergency stop or shutdown, which cuts power to both motors.
 
+### Four wheels: a second TB6612FNG
+
+A four-wheel chassis uses a second TB6612FNG for the rear wheels. Bob drives the two wheels on each side together (like a tank), so
+the left front and left rear wheel always get the same command. **Easiest way, no extra Pi pins:** wire the second board's control
+pins to the *same* Pi pins as the first board, side by side.
+
+| Second board pin | Connect to |
+|---|---|
+| **VM** | motor battery **+** (the same battery as the first board) |
+| **VCC** | Pi **3.3 V** |
+| **GND** | motor battery **−** and the Pi ground, joined with the first board's |
+| **STBY** | GPIO21, the same wire as the first board's STBY |
+| **PWMA**, **AIN1**, **AIN2** | GPIO12, GPIO5, GPIO6 (the same pins as the first board) |
+| **PWMB**, **BIN1**, **BIN2** | GPIO13, GPIO16, GPIO20 (the same pins as the first board) |
+| **AO1/AO2**, **BO1/BO2** | the rear-left and rear-right motors |
+
+- **Each motor gets its own channel.** Never join two motors onto one channel's outputs; the TB6612FNG gives only about 1.2 A a channel.
+- Then set `dc_wheels = 4` in `config.local.toml`. That is all. The emergency stop pulls STBY low, which cuts both boards.
+- If a rear wheel spins the opposite way from the front wheel on its side (`/fwd` shows it), swap its two motor wires, or set
+  `rear_left_invert = true` / `rear_right_invert = true`. If the whole robot goes backwards, flip `left_invert` / `right_invert`.
+- **Separate pins instead:** to drive a rear wheel from its own Pi pins, set all three of `dc_rear_left_pwm`, `dc_rear_left_in1` and
+  `dc_rear_left_in2` (and/or the right-hand three), plus `dc_rear_standby` if its STBY has its own pin. Bob still moves a side's wheels together, but a
+  pin you choose can't be one that's already used (for example 23 and 24 for the distance sensor). Only GPIO12 and 13 have hardware PWM, so
+  extra rear PWM pins use software PWM (1 kHz), which is fine for motors.
+
 ### Steady PWM: the one-time Pi setting
 
 GPIO12 and GPIO13 are the Pi's two hardware PWM pins. They produce perfectly steady speed signals once

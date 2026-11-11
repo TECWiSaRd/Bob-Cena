@@ -31,6 +31,19 @@ class DriveConfig:
     dc_pwm_hz: int = 20000       # above hearing; software-PWM fallback is capped at 1 kHz
     dc_min_duty: float = 0.25    # lowest duty at which your motors actually turn
     dc_brake: bool = True        # stopped motors resist turning (False = coast)
+    # --- four wheels, a second TB6612FNG (type = "dc"; manual 05). A side's two wheels always get the same command ---
+    dc_wheels: int = 2           # 2, or 4 when a second TB6612FNG drives the rear wheels
+    # The rear driver's pins. Leave them -1 and Bob assumes its control wires are in PARALLEL with the front driver's (the same GPIO
+    # pins feed both boards, no extra pins needed). Give a side all three of its pins to control its rear wheel separately instead.
+    dc_rear_left_pwm: int = -1   # rear PWMA
+    dc_rear_left_in1: int = -1   # rear AIN1
+    dc_rear_left_in2: int = -1   # rear AIN2
+    dc_rear_right_pwm: int = -1  # rear PWMB
+    dc_rear_right_in1: int = -1  # rear BIN1
+    dc_rear_right_in2: int = -1  # rear BIN2
+    dc_rear_standby: int = -1    # rear STBY; -1 = joined to the front STBY wire
+    rear_left_invert: bool = False    # flip a rear wheel that spins the wrong way compared with the front wheel on its side
+    rear_right_invert: bool = False
     estop_button_pin: int = -1   # optional physical E-stop button to GND; -1 = none
 
 
@@ -212,7 +225,10 @@ class GamepadConfig:
 @dataclass
 class MicrobitConfig:
     enabled: bool = False        # drive with a BBC micro:bit (see manual 27)
-    device: str = "auto"         # "auto" finds a micro:bit by its USB name; or a path such as "/dev/ttyACM0"
+    transport: str = "usb"       # "usb" (a cable, or the plugged-in bridge micro:bit) or "ble" (Bluetooth straight to a V2 micro:bit)
+    device: str = "auto"         # usb: "auto" finds a micro:bit by its USB name; or a path such as "/dev/ttyACM0"
+    ble_name: str = ""           # ble: the five letters in its name, e.g. "tupaz" for "BBC micro:bit [tupaz]" (empty = any micro:bit: not advised)
+    ble_address: str = ""        # ble: or its Bluetooth address, which wins over the name
     baud: int = 115200
     deadzone: float = 0.2        # tilt below this (fraction of full tilt) is ignored
     speed: float = 0.6           # full tilt drives at this fraction of the speed cap (the cap still applies on top)
@@ -288,6 +304,17 @@ class StartupConfig:
 
 
 @dataclass
+class ColorsConfig:
+    enabled: bool = True         # /color and Claude's see_colors tool: which colours the camera sees and where (manual 28). Only looks, never drives
+    min_percent: float = 1.0     # a colour must fill at least this much of the picture (in one patch) to be reported
+    min_saturation: int = 90     # 0-255. Duller colours than this are called grey/white/black, not a colour
+    min_value: int = 60          # 0-255. Darker than this is not given a colour name
+    white_saturation: int = 40   # white = this pale or paler...
+    white_value: int = 190       # ...and at least this bright
+    black_value: int = 45        # black = darker than this
+
+
+@dataclass
 class FacesConfig:
     enabled: bool = False        # recognise people who asked to be remembered (manual 26). Off until you turn it on
     match_threshold: float = 0.40   # how alike two faces must be to count as the same person (SFace's own default is 0.363)
@@ -321,6 +348,7 @@ class Config:
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     sleep: SleepConfig = field(default_factory=SleepConfig)
     faces: FacesConfig = field(default_factory=FacesConfig)
+    colors: ColorsConfig = field(default_factory=ColorsConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
 

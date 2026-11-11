@@ -151,7 +151,7 @@ def _tool(name: str, description: str, props: dict) -> dict:
 
 
 def build_tools(max_move: float, radio_peer: str | None = None, follower=None, music=None, recall: bool = False, home: bool = False,
-                tag_search: bool = False) -> list[dict]:
+                tag_search: bool = False, colors: bool = False) -> list[dict]:
     tools = [
         _tool("drive", (
             f"Drive in a direction for a short time (max {max_move:g}s), then stop. "
@@ -199,6 +199,13 @@ def build_tools(max_move: float, radio_peer: str | None = None, follower=None, m
             "streaming to you; you cannot start music yourself. Use level 0 for every action except set_volume."
         ), {"action": {"type": "string", "enum": ["status", "play", "pause", "next", "previous", "volume_up", "volume_down", "set_volume"]},
             "level": {"type": "integer", "description": "0-100, only for set_volume"}}))
+    if colors:
+        tools.append(_tool("see_colors", (
+            "Measure which colours your camera sees, exactly and quickly, and where each one is (how much of the picture it "
+            "fills, and how many degrees left or right of straight ahead). Use it when asked about a colour or where a coloured "
+            "thing is, rather than guessing from the photo. Pass 'any' for everything, or one colour to find. It only looks; it "
+            "does not move you."
+        ), {"color": {"type": "string", "enum": ["any", "red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "white", "black"]}}))
     if follower:
         tools.append(_tool("follow_person", (
             "Follow the nearest person: you turn to face their face and keep about a metre away, steering "
@@ -423,9 +430,10 @@ def _image_block(jpeg: bytes) -> dict:
 class Brain(threading.Thread):
     def __init__(self, cfg, controls: Controls, memory: Memory,
                  drive: Drive, camera: Camera, audio: Audio, radio=None, follower=None, people=None, music=None, index=None, home=None,
-                 sleep_cfg=None, faces=None):
+                 sleep_cfg=None, faces=None, colors=None):
         super().__init__(name="brain", daemon=True)
         self.faces = faces
+        self.colors = colors
         self.radio, self.follower, self.music = radio, follower, music
         self.index = index if index is not None and index.enabled else None
         self.home = home if home is not None and home.enabled else None
@@ -435,7 +443,7 @@ class Brain(threading.Thread):
         self.drive, self.camera, self.audio = drive, camera, audio
         self.client = anthropic.Anthropic(max_retries=2, timeout=120)
         self.tools = build_tools(drive.cfg.max_move_seconds, radio.peer if radio else None, follower, music, recall=self.index is not None, home=self.home is not None,
-                                tag_search=bool(self.home and self.home.cfg.tags))
+                                tag_search=bool(self.home and self.home.cfg.tags), colors=colors is not None)
         prompt = SYSTEM_PROMPT + (RADIO_PROMPT.format(peer=radio.peer) if radio else "") + (MUSIC_PROMPT if music else "") + (RECALL_PROMPT if self.index else "") + (HOME_PROMPT if self.home else "")
         self.system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
         self.halt = threading.Event()
@@ -604,6 +612,20 @@ class Brain(threading.Thread):
             self.c.usage.record(self.cfg.model, usage.input_tokens, usage.output_tokens,
                                 usage.cache_creation_input_tokens or 0, usage.cache_read_input_tokens or 0, cost)
 
+    def colors_report(self, which: str = "any") -> str:
+        """The colour finder's answer in words, for the see_colors tool (and the /color command)."""
+        from colors import NAMES, describe
+        which = (which or "any").lower()
+        frame = self.camera.grab_bgr()
+        if frame is None:
+            return "camera unavailable"
+        if which != "any" and which not in NAMES:
+            return f"I only know these colours: {', '.join(NAMES)}"
+        blobs = self.colors.analyze(frame, None if which == "any" else which)
+        if which != "any" and not blobs:
+            return f"no {which} to see (nothing {which} fills enough of the picture)"
+        return describe(blobs)
+
     def _range_text(self) -> str:
         ranger = self.drive.ranger
         return f"Distance sensor: {ranger.describe()}." if ranger and ranger.available else ""
@@ -728,6 +750,11 @@ class Brain(threading.Thread):
                 return "camera unavailable", True
             return [_image_block(frame), {"type": "text",
                     "text": f"Fresh frame from your front camera. {self._range_text()}".strip()}], False
+
+        if name == "see_colors" and self.colors is not None:
+            if not self.camera.enabled:
+                return "BLOCKED: the operator has turned your camera off.", True
+            return self.colors_report(a.get("color", "any")), False
 
         if name == "speak":
             log.info("SAY  %s", a["text"])
