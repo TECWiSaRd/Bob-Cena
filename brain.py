@@ -79,6 +79,14 @@ nearby, so reply out loud with `speak`, and follow their instructions.
 safety or testing. Don't retry or work around it. Acknowledge it and wait.
 """
 
+def system_prompt(name: str = "Bob") -> str:
+    """The standing instructions, with this robot's own name in them: "You are Lyra...", and a line telling him to introduce himself that way."""
+    name = " ".join(str(name).split())[:30] or "Bob"
+    text = SYSTEM_PROMPT.replace("You are Bob, the mind", f"You are {name}, the mind", 1)
+    return text.replace("Being a good robot:\n", f"Being a good robot:\n- Your name is {name}. If anyone asks who you are, you are {name}: say \"Hi, I'm {name}\", "
+                                               f"not any other name, and answer to {name}.\n", 1)
+
+
 RECALL_PROMPT = """
 
 You have a recall tool that searches your own past records. Use it sparingly, when remembering would change \
@@ -436,8 +444,9 @@ def _image_block(jpeg: bytes) -> dict:
 class Brain(threading.Thread):
     def __init__(self, cfg, controls: Controls, memory: Memory,
                  drive: Drive, camera: Camera, audio: Audio, radio=None, follower=None, people=None, music=None, index=None, home=None,
-                 sleep_cfg=None, faces=None, colors=None):
+                 sleep_cfg=None, faces=None, colors=None, name: str = "Bob"):
         super().__init__(name="brain", daemon=True)
+        self.name_ = name or "Bob"
         self.faces = faces
         self.colors = colors
         self.radio, self.follower, self.music = radio, follower, music
@@ -450,7 +459,7 @@ class Brain(threading.Thread):
         self.client = anthropic.Anthropic(max_retries=2, timeout=120)
         self.tools = build_tools(drive.cfg.max_move_seconds, radio.peer if radio else None, follower, music, recall=self.index is not None, home=self.home is not None,
                                 tag_search=bool(self.home and self.home.cfg.tags), colors=colors is not None, mecanum=getattr(drive, "mecanum", False))
-        prompt = SYSTEM_PROMPT + (RADIO_PROMPT.format(peer=radio.peer) if radio else "") + (MUSIC_PROMPT if music else "") + (RECALL_PROMPT if self.index else "") + (HOME_PROMPT if self.home else "")
+        prompt = system_prompt(self.name_) + (RADIO_PROMPT.format(peer=radio.peer) if radio else "") + (MUSIC_PROMPT if music else "") + (RECALL_PROMPT if self.index else "") + (HOME_PROMPT if self.home else "")
         self.system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
         self.halt = threading.Event()
         self._stepping = False
@@ -772,7 +781,7 @@ class Brain(threading.Thread):
 
         if name == "speak":
             log.info("SAY  %s", a["text"])
-            self.c.chat.append(f"you (Bob): {a['text'][:200]}")
+            self.c.chat.append(f"you ({self.name_}): {a['text'][:200]}")
             return self.audio.say(a["text"]), False
 
         if name == "play_sound":
@@ -876,7 +885,7 @@ class Brain(threading.Thread):
                 return "BLOCKED: the operator has turned your radio sending off.", True
             ok, info = self.radio.send(a["text"], source="ai")
             if ok:
-                self.c.chat.append(f"you (Bob) radioed {self.radio.peer}: {a['text'][:200]}")
+                self.c.chat.append(f"you ({self.name_}) radioed {self.radio.peer}: {a['text'][:200]}")
             return info, not ok
 
         if name == "remember_person":

@@ -56,6 +56,7 @@ Python (top level, stdlib + `anthropic`; hardware libs come from apt on the Pi a
 | `access.py` | per-person Wi-Fi-scoped tokens (`TOKEN_NAME`, `WIFI[ssid]=NAME`), lockout |
 | `remote.py` / `console.py` | shared console over a unix socket (SO_PEERCRED + groups `bobops`/`bobview`); curses UI; stderr capture |
 | `power.py` / `update.py` / `version.py` | two-step `/shutdown`; `/update` from GitHub (git checkout, rollback); code fingerprints |
+| `dance.py` | `/dance`: `Dancer` runs out-and-back steps and in-place spins (each unit balanced, never cut in half by the clock), with sounds; operator-only, no Claude tool (manual 30; fakes only) |
 | `colors.py` | named colour patches in the camera picture (HSV masks, biggest blob per colour, bearing); `/color`, Claude's read-only `see_colors` tool, `/color follow COLOR` (`ColorFollower`: drives toward a colour until stopped; operator-only, no Claude tool) (manual 28; tested with synthetic pictures only) |
 | `microbit.py` | drive with a BBC micro:bit over USB serial, a radio bridge, or Bluetooth LE (`BleLink`, bleak, Nordic UART): `D x y` while A held, `M`, `E`, `T`, `C`; optional key; programs in `microbit/` (manual 27; not tested on hardware) |
 | `faces.py` | opt-in face recognition (SFace via OpenCV): embeddings only in `faces.json`, two-step `/face remember`, `/face improve`, no Claude tool (manual 26) |
@@ -105,6 +106,7 @@ After pulling: `./install.sh --service && sudo systemctl daemon-reload` if `bob.
 - **Trims are per wheel and per direction:** `left_trim`/`right_trim` going forward, `back_left_trim`/`back_right_trim` for a wheel commanded backward (judged before the left/right
   invert). `/trim`, `/trim back ...`; `/calibrate straight go [SECONDS] [forward|back]` measures each part and saves only the part it ran. Tank/mecanum/layout (`dc_left_wheels`,
   `dc_right_wheels`) live in `hardware.Tb6612`; all of it is tested with fakes only.
+- **Robot name:** `[robot] name` (empty = `[radio] name`, then "Bob") via `Config.robot_name()`: Claude's system prompt (`brain.system_prompt(name)`), alerts, app/pairing name, radio sender, and (in `config.load`) the text wake word and the mishearing aliases follow it. The openwakeword model is trained on "hey Bob" and does not.
 - **Think only on change:** `[brain] think_when = "change"` uses `ChangeGate` (picture change %, distance, mail, heartbeat). Sleep mode uses
   stricter thresholds and blocks the AI's driving.
 - **Camera hangs:** `Camera._take` never queues behind a stuck capture; `watch()` fires `camera_stuck` which stops the wheels and, only under

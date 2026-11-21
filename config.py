@@ -111,6 +111,12 @@ class FollowConfig:
 
 
 @dataclass
+class RobotConfig:
+    name: str = ""               # this robot's name: what Claude calls himself, what the app and notifications show, and the word he listens for.
+                                 # Empty = use [radio] name (which is "Bob" unless you changed it)
+
+
+@dataclass
 class AudioConfig:
     tts: str = "piper"           # "piper" (natural; falls back to espeak-ng if unavailable) or "espeak-ng"
     piper_model: str = "en_US-lessac-medium"  # voice name (in voices/) or a path to a .onnx file
@@ -334,10 +340,20 @@ class ColorsConfig:
     follow_speed: float = 0.4    # top speed while following (the /speed cap still applies on top)
     follow_percent: float = 15.0 # he stops coming closer once the colour fills this much of the picture (how near he gets)
     follow_distance_cm: int = 0  # with a distance sensor: stop coming closer at this distance (cm). 0 = go by picture size only. Keep it above [sensor] stop_cm
+    follow_search_speed: float = 0.0   # how fast he turns on the spot while looking for the colour (0-1). 0 = automatic: half of follow_speed
     follow_deadzone: float = 0.10   # ignore a colour this close to the centre line (0 = centre, 1 = edge)
     follow_turn_gain: float = 0.9
     follow_search_s: float = 0.0 # when the colour is out of sight he turns on the spot until he finds it. 0 = keep turning for as long as it takes;
                                  # otherwise give up after this many seconds, wait still and keep watching
+
+
+@dataclass
+class DanceConfig:
+    enabled: bool = True         # /dance: a little routine of wiggles, spins and steps that keeps him roughly where he is (manual 30)
+    speed: float = 0.5           # how fast the moves are (the /speed cap still applies on top)
+    default_seconds: float = 30.0   # how long a dance lasts when you don't say
+    max_seconds: float = 300.0   # the longest a single dance may last
+    sounds: bool = True          # play beeps and chirps along with the moves
 
 
 @dataclass
@@ -361,6 +377,7 @@ class Config:
     follow: FollowConfig = field(default_factory=FollowConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     mic: MicConfig = field(default_factory=MicConfig)
+    robot: RobotConfig = field(default_factory=RobotConfig)
     radio: RadioConfig = field(default_factory=RadioConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
@@ -376,7 +393,24 @@ class Config:
     sleep: SleepConfig = field(default_factory=SleepConfig)
     faces: FacesConfig = field(default_factory=FacesConfig)
     colors: ColorsConfig = field(default_factory=ColorsConfig)
+    dance: DanceConfig = field(default_factory=DanceConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
+
+    def robot_name(self) -> str:
+        """What this robot is called: [robot] name, else [radio] name, else Bob."""
+        return " ".join((self.robot.name.strip() or self.radio.name.strip() or "Bob").split())[:30] or "Bob"
+
+
+def _follow_the_name(cfg: Config) -> None:
+    """A renamed robot listens for its new name: the wake word follows it unless you set one yourself, and Whisper's usual mishearings of
+    "Bob" (mom, bub...) are dropped, since they are not mishearings of the new name."""
+    name = cfg.robot_name()
+    if name.lower() == "bob":
+        return
+    if cfg.mic.wake_word.strip().lower() == "bob":
+        cfg.mic.wake_word = name.lower()
+    if list(cfg.mic.name_aliases) == list(MicConfig().name_aliases):
+        cfg.mic.name_aliases = []
 
 
 # Settings that only make sense with certain words. A typo here must stop Bob, not quietly pick another behaviour
@@ -414,6 +448,7 @@ LIVE_SETTINGS = {
     ("colors", "follow_percent"): (1.0, 80.0),
     ("colors", "follow_distance_cm"): (0, 300),
     ("colors", "follow_search_s"): (0.0, 3600.0),
+    ("colors", "follow_search_speed"): (0.0, 1.0),
     ("brain", "tick_seconds"): (0.5, 600.0),
     ("brain", "think_when"): None,
     ("brain", "idle_max_s"): (5.0, 3600.0),
@@ -502,6 +537,7 @@ def load(path: Path) -> Config:
     for source in (path, path.with_name("config.local.toml")):
         if source.exists():
             _apply(cfg, source)
+    _follow_the_name(cfg)
     return cfg
 
 

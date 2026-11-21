@@ -172,6 +172,20 @@ class Following(unittest.TestCase):
         last = self.spins(self.drive.calls)[-1]
         self.assertGreater(last[2], last[1])                         # then turns left toward it
 
+    def test_the_search_speed_can_be_set_and_defaults_to_half_the_follow_speed(self):
+        for kw, expected in (({}, 0.2), ({"follow_speed": 0.6}, 0.3), ({"follow_search_speed": 0.7}, 0.7)):
+            f = self.make(lambda n: frame(), **kw)
+            self.run_until(f, 20)
+            spins = [c for c in self.drive.moves() if c[1] > 0 > c[2]]
+            self.assertTrue(spins, kw)
+            self.assertAlmostEqual(max(c[1] for c in spins), expected, places=3, msg=str(kw))
+
+    def test_the_search_speed_is_live_and_range_checked(self):
+        self.assertEqual(config.parse_setting("colors", "follow_search_speed", "0.5"), 0.5)
+        for bad in ("1.5", "-0.1"):
+            with self.assertRaises(ValueError):
+                config.parse_setting("colors", "follow_search_speed", bad)
+
     def test_a_missed_picture_does_not_start_a_search(self):
         f = self.make(lambda n: frame() if n == 10 else frame(72, 88, y0=50, y1=70))
         self.run_until(f, 11)

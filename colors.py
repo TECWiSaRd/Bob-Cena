@@ -276,7 +276,7 @@ class ColorFollower:
                     else:
                         cycle = self.scan_burst_s + self.scan_pause_s
                         if missing % cycle < self.scan_burst_s:     # turn a little, hold still for a sharp picture, repeat
-                            s = clamp(self.cfg.follow_speed, 0.0, 1.0) * 0.5
+                            s = clamp(self.cfg.follow_search_speed or self.cfg.follow_speed * 0.5, 0.0, 1.0)   # 0 = automatic
                             way = side or 1                         # toward where it went; never seen: turn right
                             self.drive.start(way * s, -way * s, self.period * 1.6)
                         else:

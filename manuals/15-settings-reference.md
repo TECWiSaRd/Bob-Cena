@@ -287,6 +287,16 @@ See [Alerts, versions and updates](23-alerts-and-updates.md).
 |---|---|---|
 | `channel` | commit | `commit` installs the latest commit on `main`; `release` installs only the newest numbered release (26.11, 26.12, ...). Either way Bob only moves forward |
 
+## `[robot]`: what he is called
+
+| Setting | Default | What it does |
+|---|---|---|
+| `name` | empty | this robot's name, for example `"Lyra"`. Claude introduces himself with it ("Hi, I'm Lyra"), the app and phone notifications show it, the radio uses it as the sender, and the wake word follows it. Empty = `"Bob"` (or the old `[radio] name`) |
+
+The name sets the wake word for the **text** wake engine (`wake_engine = "text"`) unless you set `[mic] wake_word` yourself, and drops the "mom, bub..." mishearings that only
+make sense for Bob (set `name_aliases` yourself for your name if Whisper mishears it). The default `openwakeword` model is trained on "hey Bob" and can't be renamed: for a
+renamed robot use `wake_engine = "text"`, or train a model for the new name (`TRAINING_HEY_BOB.md` shows how). Changing the name needs a restart.
+
 ## `[faces]`: recognising people who agreed
 
 See [Face recognition](26-face-recognition.md).

@@ -40,7 +40,7 @@ only a fraction of a second, so if Bob's program ever died he would stop by itse
 
 **How close he gets** is set by `follow_percent` (the colour fills that much of the picture; a bigger number means closer) and, if you have a distance sensor, by
 `follow_distance_cm` (for example `40` to stop about 40 cm away). He stops coming closer when **either** says he is near enough. These can be changed live with
-`/set colors.follow_percent 25` and `/set colors.follow_distance_cm 40`. The distance sensor reads straight ahead only, so it measures what is in front of him,
+`/set colors.follow_percent 25` and `/set colors.follow_distance_cm 40`. To make him **search faster**, `/set colors.follow_search_speed 0.5`. The distance sensor reads straight ahead only, so it measures what is in front of him,
 which may not be the colour's object. The sensor's own stop distance (`[sensor] stop_cm`, `/range stop N`) is separate and still refuses to drive forward when something is closer.
 
 **What he does:** a patch on the right turns him right, on the left turns him left; when it is roughly ahead he drives toward it and stops coming closer once it
@@ -72,6 +72,7 @@ The colour is judged by hue, so a plain, bright, single-colour object works best
 | `follow_speed` | top speed while following (the `/speed` cap still applies) | `0.4` |
 | `follow_distance_cm` | with a distance sensor: he stops coming closer at this distance in cm. `0` = go by picture size only. Keep it above `[sensor] stop_cm` | `0` |
 | `follow_percent` | he stops coming closer once the colour fills this much of the picture (used when there is no sensor, or `follow_distance_cm` is 0, and always as well) | `15` |
+| `follow_search_speed` | how fast he turns on the spot while looking for a colour that is out of sight, 0 to 1. `0` = automatic (half of `follow_speed`). Faster finds it sooner, but can overshoot it | `0` |
 | `follow_deadzone` | ignore a colour this close to the centre line (0 = centre, 1 = edge) | `0.10` |
 | `follow_turn_gain` | how hard he turns toward it | `0.9` |
 | `follow_search_s` | how long he turns looking for a colour that is out of sight before giving up and waiting still. `0` = keep looking until he finds it | `0` |

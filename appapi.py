@@ -283,7 +283,7 @@ def handle_v1(h, server, method: str, url, query) -> None:
         return h._json({"error": "the app API only works over https (port %d)" % server.cfg.https_port}, 403)
     c = server.controller
     if path == "/info" and method == "GET":
-        return h._json({"api": API_VERSION, "name": getattr(c.cfg.radio, "name", "Bob") if c else "Bob",
+        return h._json({"api": API_VERSION, "name": c.cfg.robot_name() if c and hasattr(c.cfg, "robot_name") else "Bob",
                         "version": server.version, "fingerprint": server.fingerprint})
     if path == "/pair" and method == "POST":
         ip = h.client_address[0]

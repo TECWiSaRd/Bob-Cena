@@ -38,6 +38,7 @@ from calibrate import Calibrator
 from identity import Identity, IdentityError
 from faces import FaceBook, FaceService, SFaceBackend
 from colors import NAMES as COLOR_NAMES, ColorFinder, ColorFollower
+from dance import NAMES as DANCE_NAMES, Dancer
 from vision import FaceDetector, Follower
 from access import AccessPolicy
 from stream import StreamServer
@@ -91,6 +92,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /radio                Bluetooth link to the other robot: status. Also: log [n], say <text>, on|off, ai on|off
   /music                Bluetooth/AirPlay speaker: status. Also: play|pause|next|prev, vol N|up|down, pair [secs], devices, forget MAC, ai on|off
   /calibrate turn|straight|show  Bob measures his own turn rates / drift with the camera (add 'go' to run)
+  /dance [name] [secs]  a little dance that keeps him roughly in one spot: party, wiggle, spin or steps (/dance off stops it)
   /color follow COLOR   drive toward that colour until stopped (/color follow off, /stop, /estop); /color alone just looks
   /follow [seconds]     follow the nearest face (default 30 s); /follow off stops it
   /find [seconds]       turn slowly on the spot until a face is seen, then say so (/find off stops)
@@ -191,7 +193,7 @@ class Controller:
         self.identity = Identity(getpass.getuser())          # the account Bob runs as is the owner
         self.updater = Updater(BASE, channel=cfg.update.channel)
         self.local_config = BASE / "config.local.toml"       # where /set keeps what you change (read after config.toml at start)
-        self.alerts = Alerts(cfg.alerts, cfg.radio.name, os.environ.get("HEARTBEAT_URL", ""), os.environ.get("NOTIFY_URL", ""), BASE)
+        self.alerts = Alerts(cfg.alerts, cfg.robot_name(), os.environ.get("HEARTBEAT_URL", ""), os.environ.get("NOTIFY_URL", ""), BASE)
         self._update_pending: dict[str, float] = {}
         self.restart_requested = False       # set by a confirmed /update: Bob quits and the service starts the new code
         self._staging_halt = threading.Event()      # set at shutdown so parts still waiting their turn never start
@@ -210,7 +212,7 @@ class Controller:
         self.audio = Audio(cfg.audio, BASE / "sounds", sim, BASE / "voices", warm_up=not cfg.startup.stagger)
         self.listener = Listener(cfg.mic, self.heard, self.audio, self.drive)
         self.listener.on_wake = lambda: self.background(self.audio.play, "chirp")
-        self.music = MusicSystem(cfg.music, BASE, cfg.radio.name) if cfg.music.enabled else None
+        self.music = MusicSystem(cfg.music, BASE, cfg.robot_name()) if cfg.music.enabled else None
         if self.music:
             for problem in self.music.problems:
                 log.warning("Music: %s", problem)
@@ -240,13 +242,14 @@ class Controller:
                                  lambda: SFaceBackend(BASE / "models"))
         self.colors = None
         self.color_follower = None
+        self.dancer = Dancer(cfg.dance, self.drive, sound=lambda n: self.background(self.audio.play, n)) if cfg.dance.enabled else None
         if cfg.colors.enabled:
             try:
                 self.colors = ColorFinder(cfg.colors, cfg.camera.fov_deg)
                 self.color_follower = ColorFollower(cfg.colors, self.colors, self.camera, self.drive, ranger=self.ranger)
             except Exception as e:                     # no OpenCV or numpy: Bob works without colour finding
                 log.warning("Colour finding unavailable (%s)", e)
-        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home, sleep_cfg=cfg.sleep, faces=self.faces, colors=self.colors)
+        self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home, sleep_cfg=cfg.sleep, faces=self.faces, colors=self.colors, name=cfg.robot_name())
         self.brain.timeline = self.timeline
 
     def _make_radio(self, rc):
@@ -258,7 +261,7 @@ class Controller:
                       "the same on both robots")
             return None
         try:
-            return Radio(rc.name, rc.peer_name, secret, rc.role, rc.peer_address, rc.channel,
+            return Radio(self.cfg.robot_name(), rc.peer_name, secret, rc.role, rc.peer_address, rc.channel,
                          lambda sender, text: self.controls.post_radio(sender, text),
                          rc.ai_max_per_minute, BASE / "logs" / "radio.jsonl",
                          transport=rc.transport, port=rc.port, bind=rc.bind)
@@ -527,14 +530,53 @@ class Controller:
         return self.brain.colors_report(word or "any")
 
     def _color_follow_ok(self) -> bool:
-        """Checked every step while following a colour: it ends the moment the AI is allowed to think again, movement is switched off,
-        or somebody starts driving by hand, so Bob never has two things steering him at once."""
+        """Checked every step while following a colour or dancing: it ends the moment the AI is allowed to think again, movement is switched
+        off, or somebody starts driving by hand, so Bob never has two things steering him at once."""
         c = self.controls
         return c.motion_enabled and not c.auto and not self._drive_mode
 
     def stop_color_follow(self, why: str) -> None:
+        """Stop every routine that steers him by itself (following a colour, dancing). Called by every override."""
         if self.color_follower is not None:
             self.color_follower.stop(why)
+        if self.dancer is not None:
+            self.dancer.stop(why)
+
+    def dance_command(self, words: list[str]) -> str:
+        """/dance [party|wiggle|spin|steps] [seconds]: a little dance that keeps him roughly in one spot. /dance off stops it."""
+        d = self.dancer
+        if d is None:
+            return "dancing is off ([dance] enabled in config.toml)"
+        if words and words[0] in ("off", "stop"):
+            if not d.active:
+                return d.result or "not dancing"
+            d.stop()
+            return "stopping"
+        name, seconds = "party", None
+        for word in words:
+            if word in DANCE_NAMES:
+                name = word
+                continue
+            try:
+                seconds = float(word)
+            except ValueError:
+                return f"usage: /dance [{'|'.join(DANCE_NAMES)}] [seconds]  or  /dance off"
+        c = self.controls
+        if not c.motion_enabled:
+            return "movement is disabled (/motion on)"
+        if self.follower.active or (self.color_follower is not None and self.color_follower.active):
+            return "he is following something: stop that first (/follow off, /color follow off)"
+        if self.calibrating:
+            return "he is calibrating: wait for it to finish"
+        was_thinking = c.auto
+        c.auto = False                      # the AI and the dance must never steer at once: it stays paused until /resume
+        c.stop_gen += 1
+        err = d.start(name, seconds, self._color_follow_ok)
+        if err is not None:
+            c.auto = was_thinking
+            return f"can't dance: {err}"
+        return (f"dancing the {name} for up to {min(max(seconds or self.cfg.dance.default_seconds, 3.0), self.cfg.dance.max_seconds):.0f}s: "
+                "/dance off (or /stop, /estop) ends it" + ("; the AI is paused meanwhile (/resume ends the dance and lets him think again)" if was_thinking else ""))
 
     def color_follow_command(self, words: list[str]) -> str:
         """/color follow COLOR: drive toward that colour until stopped. /color follow off stops. Owner and operators only (it moves Bob)."""
@@ -556,6 +598,8 @@ class Controller:
             return "movement is disabled (/motion on)"
         if self.follower.active:
             return "he is following a face: /follow off first"
+        if self.dancer is not None and self.dancer.active:
+            return "he is dancing: /dance off first"
         if self.calibrating:
             return "he is calibrating: wait for it to finish"
         was_thinking = c.auto
@@ -969,6 +1013,7 @@ class Controller:
             + (f"radio {self.radio.state} | " if self.radio else "")
             + ("FOLLOWING | " if self.follower.active else "")
             + (f"FOLLOWING {self.color_follower.color.upper()} | " if self.color_follower is not None and self.color_follower.active else "")
+            + ("DANCING | " if self.dancer is not None and self.dancer.active else "")
             + ("CALIBRATING | " if self.calibrating else "")
             + ("MUSIC | " if self.music and self.music.playing else "")
             + (f"dist {self.ranger.distance_cm:.0f}cm | " if self.ranger.enabled and self.ranger.distance_cm is not None else "")
@@ -982,6 +1027,8 @@ class Controller:
             return "E-stop active - /clear first"
         if self.color_follower is not None and self.color_follower.active:
             self.color_follower.stop("someone took over the driving")
+        if self.dancer is not None and self.dancer.active:
+            self.dancer.stop("someone took over the driving")
         if strafe and not self.drive.mecanum:
             return 'this robot can\'t move sideways: set drive_style = "mecanum" for four mecanum wheels (manual 29)'
         now = time.monotonic()
@@ -1054,7 +1101,7 @@ class Controller:
                 if arg.lower() == "test":
                     if role not in ("owner", "operator"):
                         return "only the owner or an operator can send a test message"
-                    sent = self.alerts.notify("test", f"Test message from {self.cfg.radio.name}: alerts are working.", force=True)
+                    sent = self.alerts.notify("test", f"Test message from {self.cfg.robot_name()}: alerts are working.", force=True)
                     return "test message queued (it should reach your phone in a few seconds)" if sent else \
                         "no NOTIFY_URL is set, so there is nowhere to send it (manual 23)"
                 return "alerts: " + self.alerts.describe()
@@ -1068,6 +1115,8 @@ class Controller:
                 return self.face_command(arg, by, role)
             case "color" | "colour" | "colors" | "colours":
                 return self.color_command(arg)
+            case "dance":
+                return self.dance_command(arg.lower().split())
             case "usage" | "cost":
                 return self.controls.usage.report(c.cost)
             case "think":
@@ -1451,8 +1500,8 @@ def main() -> None:
     ctrl.remote.start()
     ctrl.alerts.start()
     if unclean:
-        ctrl.alerts.notify("restart", f"{cfg.radio.name} started again after an unexpected stop (a crash, a freeze or a power cut).", "high")
-    ctrl.alerts.notify("start", f"{cfg.radio.name} started ({describe_version(BASE).split(',')[0]}).")
+        ctrl.alerts.notify("restart", f"{cfg.robot_name()} started again after an unexpected stop (a crash, a freeze or a power cut).", "high")
+    ctrl.alerts.notify("start", f"{cfg.robot_name()} started ({describe_version(BASE).split(',')[0]}).")
     try:
         if args.headless:
             run_headless(ctrl)
@@ -1465,7 +1514,7 @@ def main() -> None:
         ctrl.remote.stop()
         ctrl.shutdown()
         clear_running(BASE / ".bob-running")      # a clean stop: the next start will not look like a crash
-        ctrl.alerts.notify("stopped", f"{cfg.radio.name} stopped.")
+        ctrl.alerts.notify("stopped", f"{cfg.robot_name()} stopped.")
         ctrl.alerts.stop(3)
         if ctrl.restart_requested:                # a confirmed /update: exit with a failure code so the service restarts him
             print("Restarting to run the updated code", file=sys.stderr)

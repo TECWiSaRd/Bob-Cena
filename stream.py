@@ -527,7 +527,8 @@ class StreamServer:
             log.warning("HTTPS (the Bob app) is off: no certificate could be made")
             return
         cert, key, self.fingerprint = made
-        robot = self.controller.cfg.radio.name if self.controller else "Bob"
+        cfg = self.controller.cfg if self.controller else None
+        robot = (cfg.robot_name() if hasattr(cfg, "robot_name") else getattr(getattr(cfg, "radio", None), "name", "Bob")) if cfg else "Bob"
         self.pairing = appapi.Pairing(self.devices, self.fingerprint, robot, identity=getattr(self.controller, "identity", None))
         try:
             TlsServer.context = server_context(cert, key)

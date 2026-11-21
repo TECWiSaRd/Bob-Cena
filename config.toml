@@ -111,6 +111,9 @@ name_aliases = ["mom", "bub", "bop", "mob", "bomb", "bobb"]   # what the speech 
 initial_prompt = ""        # a hint for the speech model; empty = "The speaker is talking to a robot named Bob."
 wake_window_s = 20.0
 
+[robot]
+name = ""                  # this robot's name: Claude says "Hi, I'm <name>", the app and notifications show it, and he listens for it. Empty = "Bob" (or [radio] name)
+
 [radio]
 enabled = false            # talk to the other robot (needs BOB_RADIO_SECRET in .env)
 name = "Bob"
@@ -229,9 +232,17 @@ black_value = 45
 follow_speed = 0.4         # /color follow COLOR: top speed (the /speed cap still applies on top)
 follow_distance_cm = 0     # with a distance sensor: stop coming closer at this distance in cm (0 = go by picture size only; keep it above [sensor] stop_cm)
 follow_percent = 15.0      # he stops coming closer once the colour fills this much of the picture
+follow_search_speed = 0.0    # how fast he turns on the spot while looking for the colour, 0 to 1 (0 = automatic: half of follow_speed)
 follow_deadzone = 0.10
 follow_turn_gain = 0.9
 follow_search_s = 0.0      # colour out of sight: he turns on the spot until he finds it (0 = for as long as it takes; or give up after this many seconds, then wait still)
+
+[dance]
+enabled = true             # /dance: wiggles, spins and out-and-back steps that keep him roughly in one spot (manual 30)
+speed = 0.5                # how fast the moves are (the /speed cap still applies on top)
+default_seconds = 30.0
+max_seconds = 300.0
+sounds = true              # beeps and chirps along with the moves
 
 [faces]
 enabled = false            # recognise people who asked to be remembered: /face remember NAME (manual 26). Numbers only, no photos
