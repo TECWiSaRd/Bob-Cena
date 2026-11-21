@@ -147,7 +147,7 @@ These work even while Bob is paused, and respect the speed cap and the emergency
 | `/right [seconds]` | spin right at 60% for 0.5 s |
 | `/move L R SECONDS` | each wheel's power from -1 (full reverse) to 1 (full forward), for example `/move 0.5 -0.5 1` |
 | `/speed 0.4` | sets the speed cap for everything, you and Claude (0 to 1) |
-| `/trim left 0.05` | makes one wheel faster (+) or slower (-) to fix drift. `/trim` shows, `/trim reset` clears |
+| `/trim left 0.05` | makes one wheel faster (+) or slower (-) to fix drift. `/trim back left 0.03` does the same when that wheel goes backward. `/trim` shows, `/trim reset` clears |
 | `/minduty 0.35` | the lowest motor power that actually turns the wheels |
 | `/motion off` / `/motion on` | forbids or allows **Claude** driving (he still sees and talks). Your own manual driving still works |
 

@@ -37,7 +37,7 @@ from sensors import RangeSensor
 from calibrate import Calibrator
 from identity import Identity, IdentityError
 from faces import FaceBook, FaceService, SFaceBackend
-from colors import NAMES as COLOR_NAMES, ColorFinder
+from colors import NAMES as COLOR_NAMES, ColorFinder, ColorFollower
 from vision import FaceDetector, Follower
 from access import AccessPolicy
 from stream import StreamServer
@@ -58,7 +58,7 @@ from version import console_hash, describe as describe_version
 BASE = Path(__file__).resolve().parent
 log = logging.getLogger("bob")
 TUNING = BASE / "tuning.json"  # Pi-only live adjustments; overrides config.toml, survives rsync
-TUNABLE = ("left_trim", "right_trim", "dc_min_duty")
+TUNABLE = ("left_trim", "right_trim", "back_left_trim", "back_right_trim", "dc_min_duty")
 
 HELP = """\
 Commands (text without a leading / is said to Bob; /ask TEXT makes him answer now, even when paused):
@@ -69,6 +69,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /sleep [on|off|auto]  rest: no wandering, thinks rarely, quiet; speaking to him wakes him for a while
   /alerts [test]        whether the heartbeat and phone notifications are working (manual 23)
   /version              which code this is (and whether it is a git checkout)
+  /set [SECTION.KEY VALUE]  owner only: change a setting now and save it (/set alone lists them; add 'once' to not save)
   /update               owner only: show what is new on GitHub; /update confirm installs it and restarts Bob
   /pair [NAME]          a one-time code to add a phone or computer to the Bob app, for you or (owner only) for NAME; /devices lists them (manual 23)
   /face                 who Bob recognises (off by default): /face remember NAME, /face improve NAME, /face forget NAME|all, /face on|off (manual 26)
@@ -79,7 +80,8 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /step                 run one AI tick while paused
   /drive [all]          manual WASD/arrow-key driving for you (pauses AI); 'all' = everyone attached
   /fwd /back /left /right [secs]   quick manual moves
-  /move L R SECS        raw wheel speeds -1..1
+  /move L R SECS [S]    raw wheel speeds -1..1 (S = sideways, mecanum only)
+  /strafe left|right [secs]   slide sideways (mecanum wheels only, manual 29)
   /motion on|off        allow / forbid AI movement (AI keeps seeing and talking)
   /camera on|off        turn the camera off: no frames reach Claude or /snap
   /speed 0-1            set the global speed cap
@@ -89,6 +91,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /radio                Bluetooth link to the other robot: status. Also: log [n], say <text>, on|off, ai on|off
   /music                Bluetooth/AirPlay speaker: status. Also: play|pause|next|prev, vol N|up|down, pair [secs], devices, forget MAC, ai on|off
   /calibrate turn|straight|show  Bob measures his own turn rates / drift with the camera (add 'go' to run)
+  /color follow COLOR   drive toward that colour until stopped (/color follow off, /stop, /estop); /color alone just looks
   /follow [seconds]     follow the nearest face (default 30 s); /follow off stops it
   /find [seconds]       turn slowly on the spot until a face is seen, then say so (/find off stops)
   /check                one report: camera, motors, audio, mic, stream, sensor, temperature, power, Wi-Fi, disk
@@ -131,7 +134,8 @@ def load_env(path: Path) -> None:
 
 
 TAG_MIN_LIMITS = (15.0, 400.0)   # the room-tag size limit (pixels) /tags min may set
-TUNING_LIMITS = {"left_trim": (-0.5, 0.5), "right_trim": (-0.5, 0.5), "dc_min_duty": (0.0, 0.9)}
+TUNING_LIMITS = {"left_trim": (-0.5, 0.5), "right_trim": (-0.5, 0.5), "back_left_trim": (-0.5, 0.5), "back_right_trim": (-0.5, 0.5),
+                 "dc_min_duty": (0.0, 0.9)}
 
 
 def load_tuning(drive_cfg, home_cfg=None, extra: dict | None = None) -> dict:
@@ -186,6 +190,7 @@ class Controller:
         self._check_lock = threading.Lock()
         self.identity = Identity(getpass.getuser())          # the account Bob runs as is the owner
         self.updater = Updater(BASE, channel=cfg.update.channel)
+        self.local_config = BASE / "config.local.toml"       # where /set keeps what you change (read after config.toml at start)
         self.alerts = Alerts(cfg.alerts, cfg.radio.name, os.environ.get("HEARTBEAT_URL", ""), os.environ.get("NOTIFY_URL", ""), BASE)
         self._update_pending: dict[str, float] = {}
         self.restart_requested = False       # set by a confirmed /update: Bob quits and the service starts the new code
@@ -234,9 +239,11 @@ class Controller:
         self.faces = FaceService(cfg.faces, FaceBook(BASE / "faces.json", cfg.faces.max_people, cfg.faces.max_samples),
                                  lambda: SFaceBackend(BASE / "models"))
         self.colors = None
+        self.color_follower = None
         if cfg.colors.enabled:
             try:
                 self.colors = ColorFinder(cfg.colors, cfg.camera.fov_deg)
+                self.color_follower = ColorFollower(cfg.colors, self.colors, self.camera, self.drive, ranger=self.ranger)
             except Exception as e:                     # no OpenCV or numpy: Bob works without colour finding
                 log.warning("Colour finding unavailable (%s)", e)
         self.brain = Brain(cfg.brain, self.controls, self.memory, self.drive, self.camera, self.audio, self.radio, self.follower, self.people, self.music, self.index, self.home, sleep_cfg=cfg.sleep, faces=self.faces, colors=self.colors)
@@ -386,6 +393,41 @@ class Controller:
                 pass
         exit_fn(75)
 
+    def set_command(self, arg: str, role: str) -> str:
+        """/set shows the settings that can change while Bob runs; /set SECTION.KEY VALUE [once] changes one, now and for next time.
+        Owner only, and only settings that are read fresh each time (config.LIVE_SETTINGS). Claude has no way to do this."""
+        if role != "owner":
+            return "only the owner can change settings"
+        words = arg.split()
+        if not words:
+            rows = [f"  {s}.{k} = {getattr(getattr(self.cfg, s), k)}" for s, k in config.LIVE_SETTINGS]
+            return ("settings you can change right now (the rest need config.local.toml and a restart, manual 15):\n" + "\n".join(rows)
+                    + "\nusage: /set SECTION.KEY VALUE   (add 'once' to skip saving it for next time)")
+        section, _, key = words[0].lower().partition(".")
+        if (section, key) not in config.LIVE_SETTINGS:
+            return self.set_command("", role) if not key else \
+                f"{words[0]} can't be changed while Bob runs. Edit config.local.toml and restart him (/set alone lists the ones that can)"
+        target = getattr(self.cfg, section)
+        current = getattr(target, key)
+        if len(words) == 1:
+            return f"{section}.{key} = {current}"
+        once = len(words) > 2 and words[-1].lower() == "once"
+        text = " ".join(words[1:-1] if once else words[1:])
+        try:
+            value = config.parse_setting(section, key, text.lower() if isinstance(current, str) else text)
+        except ValueError as e:
+            return str(e)
+        setattr(target, key, value)
+        log.info("SET %s.%s: %s -> %s%s", section, key, current, value, " (once)" if once else "")
+        if once:
+            return f"{section}.{key}: {current} -> {value} (until Bob restarts)"
+        try:
+            config.save_local(self.local_config, section, key, value)
+        except (OSError, ValueError) as e:
+            log.warning("SET could not save %s.%s: %s", section, key, e)
+            return f"{section}.{key}: {current} -> {value} now, but I couldn't save it for next time ({e})"
+        return f"{section}.{key}: {current} -> {value} (now, and saved to {self.local_config.name})"
+
     def update_command(self, words: list[str], by: str | None, role: str) -> str | None:
         """/update shows what is new on GitHub; /update confirm installs it and restarts Bob. Owner only."""
         if role != "owner":
@@ -472,6 +514,8 @@ class Controller:
         if not self.camera.enabled:
             return "the camera is off: /camera on"
         word = arg.strip().lower()
+        if word.split(" ")[0] == "follow":
+            return self.color_follow_command(word.split()[1:])
         if word in ("center", "centre"):
             frame = self.camera.grab_bgr()
             if frame is None:
@@ -479,8 +523,50 @@ class Controller:
             h, s, v, name = self.colors.centre(frame)
             return f"the middle of the picture: hue {h} (0-179), saturation {s}, value {v} (0-255): {name}"
         if word and word != "any" and word not in COLOR_NAMES:
-            return f"usage: /color [{'|'.join(COLOR_NAMES)}|center]"
+            return f"usage: /color [{'|'.join(COLOR_NAMES)}|center|follow COLOR|follow off]"
         return self.brain.colors_report(word or "any")
+
+    def _color_follow_ok(self) -> bool:
+        """Checked every step while following a colour: it ends the moment the AI is allowed to think again, movement is switched off,
+        or somebody starts driving by hand, so Bob never has two things steering him at once."""
+        c = self.controls
+        return c.motion_enabled and not c.auto and not self._drive_mode
+
+    def stop_color_follow(self, why: str) -> None:
+        if self.color_follower is not None:
+            self.color_follower.stop(why)
+
+    def color_follow_command(self, words: list[str]) -> str:
+        """/color follow COLOR: drive toward that colour until stopped. /color follow off stops. Owner and operators only (it moves Bob)."""
+        f = self.color_follower
+        if f is None:
+            return "colour following needs colour finding (see /color)"
+        if not words:
+            return f"usage: /color follow COLOR ({'|'.join(COLOR_NAMES)}) or /color follow off" + (f"  (now following {f.color})" if f.active else "")
+        if words[0] in ("off", "stop"):
+            if not f.active:
+                return f.result or "not following a colour"
+            f.stop()
+            return "stopping"
+        name = words[0]
+        if name not in COLOR_NAMES:
+            return f"usage: /color follow [{'|'.join(COLOR_NAMES)}] or /color follow off"
+        c = self.controls
+        if not c.motion_enabled:
+            return "movement is disabled (/motion on)"
+        if self.follower.active:
+            return "he is following a face: /follow off first"
+        if self.calibrating:
+            return "he is calibrating: wait for it to finish"
+        was_thinking = c.auto
+        c.auto = False                      # the AI and the follower must never steer at once: it stays paused until /resume
+        c.stop_gen += 1
+        err = f.start(name, self._color_follow_ok)
+        if err is not None:
+            c.auto = was_thinking
+            return f"can't follow {name}: {err}"
+        return (f"following {name} until you stop him: /color follow off (or /stop, /estop)"
+                + ("; the AI is paused meanwhile (/resume ends the following and lets him think again)" if was_thinking else ""))
 
     def pair_command(self, name: str, by: str | None, role: str) -> str:
         """/pair [NAME]: a one-time invite for adding a phone or computer to the Bob app, for one particular person.
@@ -670,7 +756,7 @@ class Controller:
             d = self.cfg.drive
             return (("measured turn rates (deg/s at command speed, speed cap %.2f): " % self.calibration.get("cap", 1.0)
                      + ", ".join(f"{k}: {v:g}" for k, v in turn.items())) if turn else "no turn calibration yet (/calibrate turn)") + \
-                f"\ntrims: left {d.left_trim:+.3f}, right {d.right_trim:+.3f}"
+                f"\ntrims: left {d.left_trim:+.3f}, right {d.right_trim:+.3f}; backing up: left {d.back_left_trim:+.3f}, right {d.back_right_trim:+.3f}"
         if what == "cancel":
             if self.calibrating:
                 self.calibrating.cancel = True
@@ -690,13 +776,34 @@ class Controller:
         plan = ("Bob will spin left and right in short bursts (about 6 spins, each followed by a spin back), "
                 "so he needs clear floor around him and a room with some detail in view (not a blank wall)."
                 if what == "turn" else
-                "Bob will drive forward about half a metre and back, twice, so he needs a metre of clear floor ahead "
-                "and a room with some detail in view (not a blank wall).")
+                "Bob will drive forward and back, twice, to fix drift going forward, and then BACKWARD and forward twice, to fix drift going backward "
+                "(about half a metre each way at the normal 1.2 s; /calibrate straight go 0.6 makes each run shorter; add 'forward' or 'back' to do only "
+                "that part). He needs a metre of clear floor ahead AND behind him (his distance sensor can't see behind), and a room with some detail in view "
+                "(not a blank wall).")
         if words[1:2] != ["go"]:
             return f"{plan}\nIt runs at the current speed cap ({self.drive.speed_cap:.2f}). Type '/calibrate {what} go' to start, or press Space to stop."
+        run_seconds, reverse, forward = None, True, True
+        if what == "straight":
+            for word in words[2:]:
+                if word == "forward":
+                    reverse = False                    # skip the backing-up part (no clear floor behind him)
+                    continue
+                if word in ("back", "backward", "reverse"):
+                    forward = False                    # only the backing-up part
+                    continue
+                try:
+                    run_seconds = float(word)
+                except ValueError:
+                    return ("usage: /calibrate straight go [SECONDS] [forward|back]   (SECONDS: each run, 0.4 to 2, default 1.2; "
+                            "'forward' does only the forward part, 'back' only the backing-up part)")
+                if not 0.4 <= run_seconds <= 2.0:
+                    return "each run should be between 0.4 and 2 seconds (the default is 1.2)"
+            if not forward and not reverse:
+                return "choose one: forward or back (leave both out to do both parts)"
 
         def run():
-            cal = Calibrator(self.camera, self.drive, self.ranger, self.cfg.camera.fov_deg, say=lambda m: log.info("%s", m))
+            cal = Calibrator(self.camera, self.drive, self.ranger, self.cfg.camera.fov_deg, say=lambda m: log.info("%s", m),
+                             save_failed=BASE / "captures")
             self.calibrating = cal
             try:
                 if what == "turn":
@@ -707,12 +814,22 @@ class Controller:
                     log.info("CALIB done: turn rates (deg/s at command speed): %s - saved, and Bob has been told",
                              ", ".join(f"{k}: {v:g}" for k, v in rates.items()))
                 else:
-                    res = cal.straight()
-                    d.right_trim, d.left_trim = res["right_trim"], res["left_trim"]
+                    res = cal.straight(**({"seconds": run_seconds} if run_seconds else {}), reverse=reverse, forward=forward)
+                    if forward:                                      # a part that wasn't run leaves its saved trims exactly as they were
+                        d.right_trim, d.left_trim = res["right_trim"], res["left_trim"]
+                    if "back_right_trim" in res:
+                        d.back_right_trim, d.back_left_trim = res["back_right_trim"], res["back_left_trim"]
                     save_tuning(d, self.calibration, self.tuning_extra)
-                    log.info("CALIB done: drift %+.1f deg/s before; trims now left %+.3f, right %+.3f - saved. "
-                             "Run /fwd 3 to check it, or /calibrate straight go again to refine",
-                             res["drift_before"], d.left_trim, d.right_trim)
+                    if forward:
+                        log.info("CALIB done: drift %+.1f deg/s before; trims now left %+.3f, right %+.3f - saved. "
+                                 "Run /fwd 3 to check it, or /calibrate straight go again to refine",
+                                 res["drift_before"], d.left_trim, d.right_trim)
+                    if "back_drift_before" in res:
+                        log.info("CALIB done: backing up drifted %+.1f deg/s; back trims now left %+.3f, right %+.3f - saved. "
+                                 "Run /back 3 to check it", res["back_drift_before"], d.back_left_trim, d.back_right_trim)
+                    elif "back_error" in res:
+                        log.warning("CALIB: the forward trim is saved, but backing up couldn't be measured (%s); set it by hand with "
+                                    "/trim back left|right X", res["back_error"])
             except Exception as e:
                 log.error("CALIB failed: %s", e)
             finally:
@@ -731,6 +848,7 @@ class Controller:
         words = " ".join(w for w in re.sub(r"[^\w\s']", " ", text.lower()).split() if w not in ("please", "bob", "now"))
         if words in self.STOP_PHRASES:
             self.follower.stop("told to stop")
+            self.stop_color_follow("told to stop")
             self.drive.stop()
             self.controls.auto = False
             self.controls.stop_gen += 1
@@ -754,6 +872,7 @@ class Controller:
         log.info("Shutting down")
         self._staging_halt.set()
         self.follower.stop("shutting down")
+        self.stop_color_follow("shutting down")
         if self.music:
             self.music.stop()     # puts the music volume back if it was ducked
         if self.gamepad:
@@ -824,6 +943,7 @@ class Controller:
     # ---- overrides ------------------------------------------------------
     def estop(self, source: str = "console") -> None:
         self.follower.stop("emergency stop")
+        self.stop_color_follow("emergency stop")
         self.drive.emergency_stop()
         self.controls.auto = False
         self.controls.stop_gen += 1
@@ -848,6 +968,7 @@ class Controller:
             f"camera {'on' if self.camera.enabled else 'OFF'} | mic {self.listener.describe()} | "
             + (f"radio {self.radio.state} | " if self.radio else "")
             + ("FOLLOWING | " if self.follower.active else "")
+            + (f"FOLLOWING {self.color_follower.color.upper()} | " if self.color_follower is not None and self.color_follower.active else "")
             + ("CALIBRATING | " if self.calibrating else "")
             + ("MUSIC | " if self.music and self.music.playing else "")
             + (f"dist {self.ranger.distance_cm:.0f}cm | " if self.ranger.enabled and self.ranger.distance_cm is not None else "")
@@ -856,18 +977,24 @@ class Controller:
             + (" | SIM" if self.drive.sim else "")
         )
 
-    def manual(self, left: float, right: float, seconds: float, blocking: bool = False) -> str:
+    def manual(self, left: float, right: float, seconds: float, blocking: bool = False, strafe: float = 0.0) -> str:
         if self.drive.estop.is_set():
             return "E-stop active - /clear first"
+        if self.color_follower is not None and self.color_follower.active:
+            self.color_follower.stop("someone took over the driving")
+        if strafe and not self.drive.mecanum:
+            return 'this robot can\'t move sideways: set drive_style = "mecanum" for four mecanum wheels (manual 29)'
         now = time.monotonic()
         if now - self._last_manual_event > 2.0:   # a held key sends many moves a second: note the start of each burst
             self._last_manual_event = now
-            self.timeline.record("manual_move", left=round(left, 2), right=round(right, 2), seconds=round(seconds, 2))
+            self.timeline.record("manual_move", left=round(left, 2), right=round(right, 2), seconds=round(seconds, 2),
+                                 **({"strafe": round(strafe, 2)} if strafe else {}))
+        extra = (strafe,) if strafe else ()          # (only passed when sliding, so every drive keeps working with the old arguments)
         if blocking:
-            threading.Thread(target=self.drive.move, args=(left, right, seconds), daemon=True).start()
+            threading.Thread(target=self.drive.move, args=(left, right, seconds, *extra), daemon=True).start()
         else:
-            self.drive.start(left, right, seconds)
-        return f"manual move L={left:+.2f} R={right:+.2f} {seconds:.1f}s"
+            self.drive.start(left, right, seconds, *extra)
+        return f"manual move L={left:+.2f} R={right:+.2f}{f' strafe={strafe:+.2f}' if strafe else ''} {seconds:.1f}s"
 
     def handle(self, line: str, by: str | None = None, role: str = "owner") -> str | None:
         """Run one console line. `by` names the person when it came from the shared console or dashboard;
@@ -914,6 +1041,7 @@ class Controller:
                 c.auto = False
                 c.stop_gen += 1
                 self.follower.stop("paused by the operator")
+                self.stop_color_follow("paused by the operator")
                 self.drive.stop()
                 return "AI paused; any thought in progress is cancelled"
             case "pair":
@@ -934,6 +1062,8 @@ class Controller:
                 return describe_version(BASE)
             case "update":
                 return self.update_command(arg.lower().split(), by, role)
+            case "set":
+                return self.set_command(arg, role)
             case "face" | "faces":
                 return self.face_command(arg, by, role)
             case "color" | "colour" | "colors" | "colours":
@@ -995,9 +1125,23 @@ class Controller:
                 return self.manual(-0.6, 0.6, secs(0.5), blocking=True)
             case "right":
                 return self.manual(0.6, -0.6, secs(0.5), blocking=True)
+            case "strafe":
+                side, _, rest = arg.partition(" ")
+                if side.lower() not in ("left", "right"):
+                    return "usage: /strafe left|right [secs]  (mecanum wheels only)"
+                try:
+                    secs_ = float(rest) if rest.strip() else 0.8
+                except ValueError:
+                    return "usage: /strafe left|right [secs]"
+                return self.manual(0.0, 0.0, secs_, blocking=True, strafe=-0.6 if side.lower() == "left" else 0.6)
             case "move":
-                l, r, s = (float(x) for x in arg.split())
-                return self.manual(l, r, s, blocking=True)
+                try:
+                    nums = [float(x) for x in arg.split()]
+                except ValueError:
+                    nums = []
+                if len(nums) not in (3, 4):
+                    return "usage: /move L R SECS [STRAFE]"
+                return self.manual(nums[0], nums[1], nums[2], blocking=True, strafe=nums[3] if len(nums) == 4 else 0.0)
             case "motion":
                 c.motion_enabled = arg.lower() != "off"
                 return f"AI motion {'enabled' if c.motion_enabled else 'DISABLED'}"
@@ -1012,16 +1156,27 @@ class Controller:
             case "trim":
                 d = self.cfg.drive
                 words = arg.lower().split()
+                def trims() -> str:
+                    return (f"left {d.left_trim:+.3f}, right {d.right_trim:+.3f}; when backing up: left {d.back_left_trim:+.3f}, "
+                            f"right {d.back_right_trim:+.3f}")
                 if not words:
-                    return f"trim: left {d.left_trim:+.3f}, right {d.right_trim:+.3f}  (+0.05 = that wheel 5% faster)"
-                if words == ["reset"]:
-                    d.left_trim = d.right_trim = 0.0
-                elif len(words) == 2 and words[0] in ("left", "right"):
-                    setattr(d, f"{words[0]}_trim", max(-0.5, min(0.5, float(words[1]))))
-                else:
-                    return "usage: /trim | /trim left 0.05 | /trim right -0.03 | /trim reset"
+                    return f"trim: {trims()}  (+0.05 = that wheel 5% faster)"
+                try:
+                    if words == ["reset"]:
+                        d.left_trim = d.right_trim = d.back_left_trim = d.back_right_trim = 0.0
+                    elif words == ["back", "reset"]:
+                        d.back_left_trim = d.back_right_trim = 0.0
+                    elif len(words) == 2 and words[0] in ("left", "right"):
+                        setattr(d, f"{words[0]}_trim", max(-0.5, min(0.5, float(words[1]))))
+                    elif len(words) == 3 and words[0] == "back" and words[1] in ("left", "right"):
+                        setattr(d, f"back_{words[1]}_trim", max(-0.5, min(0.5, float(words[2]))))
+                    else:
+                        raise ValueError
+                except ValueError:
+                    return ("usage: /trim | /trim left 0.05 | /trim right -0.03 | /trim back left 0.03 | /trim back right -0.02 "
+                            "| /trim back reset | /trim reset   (the 'back' ones are for a wheel being driven backward)")
                 save_tuning(d, self.calibration, self.tuning_extra)
-                return f"trim saved: left {d.left_trim:+.3f}, right {d.right_trim:+.3f}"
+                return f"trim saved: {trims()}"
             case "minduty":
                 d = self.cfg.drive
                 if not arg:

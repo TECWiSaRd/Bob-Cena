@@ -153,6 +153,7 @@ class DcMotor:
         from gpiozero import DigitalOutputDevice
         self._cfg, self._trim_key = cfg, trim_key  # read live, so /minduty and /trim apply at once
         self._invert = invert                      # a wheel mounted the other way round (the rear wheels of a four-wheeler)
+        self.back = False                          # set by the Drive just before each command: is this wheel being asked to go backward?
         self._devs: list = []
         self._value = None
         self._dir = 0
@@ -196,7 +197,8 @@ class DcMotor:
         self._value = v
         # Motors don't turn below a minimum duty: map 0..1 onto min..1, then apply this wheel's trim.
         lo = self._cfg.dc_min_duty
-        duty = (lo + (1 - lo) * abs(v)) * (1 + getattr(self._cfg, self._trim_key))
+        trim = getattr(self._cfg, ("back_" if self.back else "") + self._trim_key, 0.0)    # a separate fix for going backward
+        duty = (lo + (1 - lo) * abs(v)) * (1 + trim)
         self._pwm.set(clamp(duty, 0.0, 1.0))
 
     def close(self) -> None:
@@ -220,6 +222,15 @@ class MotorGroup:
         for motor in self.motors:
             motor.value = v
 
+    @property
+    def back(self):
+        return self.motors[0].back
+
+    @back.setter
+    def back(self, flag):
+        for motor in self.motors:
+            motor.back = flag
+
     def close(self) -> None:
         for motor in self.motors:
             motor.close()
@@ -239,38 +250,78 @@ class Tb6612:
     """TB6612FNG motor driver: two motors plus the standby pin that powers the outputs down.
 
     With dc_wheels = 4 a second board drives the rear wheels. If its control wires run in parallel with the first board's, nothing
-    more is needed here; if a rear wheel has its own pins (dc_rear_*), it is driven together with the front wheel on its side."""
+    more is needed here; if a rear wheel has its own pins (dc_rear_*), it is driven together with the front wheel on its side.
+    dc_left_wheels / dc_right_wheels can instead say exactly which channels are on which side."""
+
+    CHANNELS = ("board1_a", "board1_b", "board2_a", "board2_b")
+
+    @classmethod
+    def layout(cls, cfg, rear_l, rear_r) -> tuple[list[str], list[str]]:
+        """Which channels are on the left and right (names from CHANNELS). Raises ValueError for anything that can't work."""
+        have = {"board1_a", "board1_b"} | ({"board2_a"} if rear_l else set()) | ({"board2_b"} if rear_r else set())
+        left = [str(n).lower() for n in cfg.dc_left_wheels]
+        right = [str(n).lower() for n in cfg.dc_right_wheels]
+        if not left and not right:
+            return ["board1_a"] + (["board2_a"] if rear_l else []), ["board1_b"] + (["board2_b"] if rear_r else [])
+        if not left or not right:
+            raise ValueError("dc_left_wheels and dc_right_wheels must both be set (or both left empty)")
+        for name in left + right:
+            if name not in cls.CHANNELS:
+                raise ValueError(f"{name!r} isn't a motor channel (use: {', '.join(cls.CHANNELS)})")
+            if name not in have:
+                pins = "dc_rear_left_*" if name == "board2_a" else "dc_rear_right_*"
+                raise ValueError(f"{name} needs dc_wheels = 4 and its own pins ({pins}): a board wired in parallel can't be told apart")
+        if len(set(left + right)) != len(left + right):
+            raise ValueError("a motor channel can only be on one side, once")
+        return left, right
 
     def __init__(self, cfg):
         from gpiozero import DigitalOutputDevice
         if cfg.dc_wheels not in (2, 4):
             raise ValueError(f"dc_wheels must be 2 or 4, not {cfg.dc_wheels}")
         self._stby = self._rear_stby = self.left = self.right = None
+        self.wheels = None          # mecanum only: (front left, front right, rear left, rear right), each on its own
         self._motors: list = []
         try:
             rear_l = rear_pins(cfg, "left") if cfg.dc_wheels == 4 else None
             rear_r = rear_pins(cfg, "right") if cfg.dc_wheels == 4 else None
+            mecanum = cfg.drive_style == "mecanum"
+            if mecanum and cfg.dc_wheels != 4:
+                raise ValueError('drive_style = "mecanum" needs dc_wheels = 4')
+            if mecanum and not (rear_l and rear_r):
+                raise ValueError('drive_style = "mecanum" needs each rear wheel on its own pins (dc_rear_left_* and dc_rear_right_*): '
+                                 'wheels wired in parallel cannot be driven separately')
+            if mecanum and (cfg.dc_left_wheels or cfg.dc_right_wheels):
+                raise ValueError('dc_left_wheels / dc_right_wheels are for tank style; mecanum drives all four wheels itself')
+            lay = None if mecanum else self.layout(cfg, rear_l, rear_r)
+            pins = {"board1_a": (cfg.dc_left_pwm, cfg.dc_left_in1, cfg.dc_left_in2),
+                    "board1_b": (cfg.dc_right_pwm, cfg.dc_right_in1, cfg.dc_right_in2), "board2_a": rear_l, "board2_b": rear_r}
+            flip = {"board2_a": cfg.rear_left_invert, "board2_b": cfg.rear_right_invert}
             self._stby = DigitalOutputDevice(cfg.dc_standby, initial_value=False)  # low = outputs off
             if cfg.dc_wheels == 4 and cfg.dc_rear_standby >= 0:
                 self._rear_stby = DigitalOutputDevice(cfg.dc_rear_standby, initial_value=False)
-            left = DcMotor(cfg.dc_left_pwm, cfg.dc_left_in1, cfg.dc_left_in2, cfg, "left_trim")
-            self._motors.append(left)
-            right = DcMotor(cfg.dc_right_pwm, cfg.dc_right_in1, cfg.dc_right_in2, cfg, "right_trim")
-            self._motors.append(right)
-            lefts, rights = [left], [right]
-            if rear_l:
-                lefts.append(DcMotor(*rear_l, cfg, "left_trim", invert=cfg.rear_left_invert))
-                self._motors.append(lefts[-1])
-            if rear_r:
-                rights.append(DcMotor(*rear_r, cfg, "right_trim", invert=cfg.rear_right_invert))
-                self._motors.append(rights[-1])
-            self.left = MotorGroup(lefts) if len(lefts) > 1 else left
-            self.right = MotorGroup(rights) if len(rights) > 1 else right
+
+            def motor(name: str, side: str):
+                m = DcMotor(*pins[name], cfg, f"{side}_trim", invert=flip.get(name, False))
+                self._motors.append(m)
+                return m
+
+            if mecanum:
+                self.wheels = (motor("board1_a", "left"), motor("board1_b", "right"), motor("board2_a", "left"), motor("board2_b", "right"))
+            else:
+                lefts = [motor(n, "left") for n in lay[0]]
+                rights = [motor(n, "right") for n in lay[1]]
+                self.left = MotorGroup(lefts) if len(lefts) > 1 else lefts[0]
+                self.right = MotorGroup(rights) if len(rights) > 1 else rights[0]
             self.standby(True)
         except Exception:
             self.close()  # free whatever was claimed so a retry doesn't hit "pin in use"
             raise
-        if cfg.dc_wheels == 4:
+        if self.wheels:
+            log.info("TB6612FNG ready, MECANUM: four wheels each on its own pins (STBY GPIO%d)", cfg.dc_standby)
+        elif cfg.dc_left_wheels:
+            log.info("TB6612FNG ready: left = %s, right = %s (STBY GPIO%d)", "+".join(lay[0]), "+".join(lay[1]), cfg.dc_standby)
+        elif cfg.dc_wheels == 4:
             how = "; rear boards on their own pins" if (rear_l or rear_r) else "; rear board wired in parallel with the front one"
             log.info("TB6612FNG ready, four wheels (left PWM GPIO%d, right PWM GPIO%d, STBY GPIO%d%s)",
                      cfg.dc_left_pwm, cfg.dc_right_pwm, cfg.dc_standby, how)
@@ -320,6 +371,11 @@ class Drive:
         self._deadline = 0.0
         self._moving = False
         self._left = self._right = self._button = self._board = None
+        self._wheels = None         # mecanum: the four wheels, driven one by one
+        # Can Bob strafe? Only with four DC wheels set up as mecanum (a bad setup is caught when the driver starts and he simulates).
+        self.mecanum = cfg.drive_style == "mecanum" and cfg.type == "dc" and cfg.dc_wheels == 4
+        if cfg.drive_style == "mecanum" and not self.mecanum:
+            log.warning('drive_style = "mecanum" needs type = "dc" and dc_wheels = 4: driving as a tank instead')
         self._closed = False
         self._released = False
         if not sim:
@@ -342,6 +398,7 @@ class Drive:
         cfg = self.cfg
         if cfg.type == "dc":
             self._board = Tb6612(cfg)
+            self._wheels = self._board.wheels
             return self._board.left, self._board.right
         mode = cfg.pwm  # auto | hardware | pigpio | software
         if mode in ("auto", "hardware"):
@@ -376,12 +433,41 @@ class Drive:
             log.warning("Using software PWM: servos may jitter")
         return Servo(cfg.left_pin, **kw), Servo(cfg.right_pin, **kw)
 
-    def _apply(self, left: float, right: float) -> None:
+    @staticmethod
+    def mecanum_mix(left: float, right: float, strafe: float) -> tuple[float, float, float, float]:
+        """Speeds for (front left, front right, rear left, rear right) from a tank command plus a sideways one (+ = right).
+
+        The standard mecanum mix. If any wheel would need more than full speed, all four are scaled down together,
+        so the direction of travel stays right instead of one wheel clipping."""
+        left, right, strafe = clamp(left, -1, 1), clamp(right, -1, 1), clamp(strafe, -1, 1)
+        wheels = (left + strafe, right - strafe, left - strafe, right + strafe)
+        top = max(abs(w) for w in wheels)
+        return tuple(w / top for w in wheels) if top > 1 else wheels
+
+    def _apply_mecanum(self, left: float, right: float, strafe: float) -> None:
+        cap, cfg = self.speed_cap, self.cfg
+        fl, fr, rl, rr = (w * cap for w in self.mecanum_mix(left, right, strafe))
+        backs = (fl < 0, fr < 0, rl < 0, rr < 0)        # which wheels are asked to go backward (judged before any invert)
+        if cfg.left_invert:
+            fl, rl = -fl, -rl
+        if cfg.right_invert:
+            fr, rr = -fr, -rr
+        if self.sim:
+            log.debug("[sim] mecanum FL=%+.2f FR=%+.2f RL=%+.2f RR=%+.2f", fl, fr, rl, rr)
+            return
+        for wheel, v, back in zip(self._wheels, (fl, fr, rl, rr), backs):
+            wheel.back = back
+            wheel.value = None if v == 0 else v         # (a rear wheel's own invert is applied inside the motor)
+
+    def _apply(self, left: float, right: float, strafe: float = 0.0) -> None:
         if self._released:
             return
+        if self.mecanum:
+            return self._apply_mecanum(left, right, strafe)
         cap, cfg = self.speed_cap, self.cfg
         l, r = clamp(left, -1, 1) * cap, clamp(right, -1, 1) * cap
         dc = cfg.type == "dc"
+        lb, rb = l < 0, r < 0               # which wheels are asked to go backward: judged before any invert, so the trims follow the command
         if cfg.left_invert:
             l = -l
         if cfg.right_invert:
@@ -390,8 +476,10 @@ class Drive:
             log.debug("[sim] wheels L=%+.2f R=%+.2f", l, r)
             return
         if not dc:  # servos: trim shifts the pulse (DC motors apply theirs inside DcMotor, after min-duty)
-            l = clamp(l + cfg.left_trim, -1, 1) if l else 0
-            r = clamp(r + cfg.right_trim, -1, 1) if r else 0
+            l = clamp(l + (cfg.back_left_trim if lb else cfg.left_trim), -1, 1) if l else 0
+            r = clamp(r + (cfg.back_right_trim if rb else cfg.right_trim), -1, 1) if r else 0
+        else:
+            self._left.back, self._right.back = lb, rb
         self._left.value = None if l == 0 else l
         self._right.value = None if r == 0 else r
 
@@ -399,23 +487,26 @@ class Drive:
     def moving(self) -> bool:
         return self._moving
 
-    def start(self, left: float, right: float, seconds: float) -> bool:
-        """Run the wheels for up to `seconds` without blocking. False if E-stopped."""
+    def start(self, left: float, right: float, seconds: float, strafe: float = 0.0) -> bool:
+        """Run the wheels for up to `seconds` without blocking. False if E-stopped. `strafe` (+ = right) needs mecanum wheels."""
         if self.estop.is_set() or self._closed:
             return False
         seconds = clamp(seconds, 0.0, self.cfg.max_move_seconds)
         forward = left + right > 0.05
         with self._lock:
             self.stop_reason = ""
+            if strafe and not self.mecanum:
+                self.stop_reason = "this robot has no mecanum wheels set up (drive_style), so it cannot move sideways"
+                return False
             if forward and (cm := self._obstacle()) is not None:
                 self.stop_reason = f"obstacle {cm:.0f} cm ahead - refused to drive forward"
                 self._halt_locked()
                 self._emit(self.stop_reason)
                 return False
-            if seconds <= 0 or (left == 0 and right == 0):
+            if seconds <= 0 or (left == 0 and right == 0 and strafe == 0):
                 self._halt_locked()  # nothing to run: never energize without a deadline to stop at
                 return True
-            self._apply(left, right)
+            self._apply(left, right, strafe)
             now = time.monotonic()
             if self._moving:
                 self.moved_s += now - self._move_t0     # a new move replaced one still running
@@ -425,10 +516,10 @@ class Drive:
             self._forward = forward
         return True
 
-    def move(self, left: float, right: float, seconds: float) -> float:
+    def move(self, left: float, right: float, seconds: float, strafe: float = 0.0) -> float:
         """Blocking move. Returns how long the wheels actually ran."""
         t0 = time.monotonic()
-        if not self.start(left, right, seconds):
+        if not self.start(left, right, seconds, strafe):
             return 0.0
         while self._moving and not self.estop.is_set() and not self._closed:
             time.sleep(0.02)

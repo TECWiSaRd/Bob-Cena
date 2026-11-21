@@ -27,12 +27,17 @@ dc_brake = true            # false = coast to a stop
 # Four wheels with a second TB6612FNG (manual 05). Easiest: wire the second board's PWMA/AIN1/AIN2/PWMB/BIN1/BIN2/STBY to the SAME
 # Pi pins as the first (in parallel), set dc_wheels = 4 and leave the rear pins at -1. Or give a rear wheel its own pins (all three of a side).
 dc_wheels = 2
+drive_style = "tank"      # "mecanum" for four mecanum wheels: each wheel on its own pins, and Bob can slide sideways (manual 29)
 dc_rear_left_pwm = -1
 dc_rear_left_in1 = -1
 dc_rear_left_in2 = -1
 dc_rear_right_pwm = -1
 dc_rear_right_in1 = -1
 dc_rear_right_in2 = -1
+# Which motor channel is on which side. Empty = automatic. Names: "board1_a", "board1_b", "board2_a", "board2_b" (board 2 needs its own pins).
+# Example, one wheel on each board's A channel:  dc_left_wheels = ["board1_a"]   dc_right_wheels = ["board2_a"]   (manual 05)
+dc_left_wheels = []
+dc_right_wheels = []
 dc_rear_standby = -1       # -1 = the rear STBY is joined to the front STBY wire
 rear_left_invert = false   # a rear wheel that turns the opposite way to the front wheel on its side
 rear_right_invert = false
@@ -221,6 +226,12 @@ min_value = 60             # 0-255; darker than this is not given a colour
 white_saturation = 40
 white_value = 190
 black_value = 45
+follow_speed = 0.4         # /color follow COLOR: top speed (the /speed cap still applies on top)
+follow_distance_cm = 0     # with a distance sensor: stop coming closer at this distance in cm (0 = go by picture size only; keep it above [sensor] stop_cm)
+follow_percent = 15.0      # he stops coming closer once the colour fills this much of the picture
+follow_deadzone = 0.10
+follow_turn_gain = 0.9
+follow_search_s = 0.0      # colour out of sight: he turns on the spot until he finds it (0 = for as long as it takes; or give up after this many seconds, then wait still)
 
 [faces]
 enabled = false            # recognise people who asked to be remembered: /face remember NAME (manual 26). Numbers only, no photos

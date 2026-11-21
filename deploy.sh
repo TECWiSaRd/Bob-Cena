@@ -6,7 +6,7 @@
 #   ./deploy.sh --dry-run       show what WOULD be copied, change nothing
 #
 # It leaves out the app folder, the git history, and the Pi's own data and secrets (.env, memory, tuning, certificates,
-# paired devices...): see .rsync-exclude. Restart Bob afterwards (/quit and start him again, or sudo systemctl restart bob).
+# paired devices, config.local.toml...): see .rsync-exclude. Restart Bob afterwards (/quit and start him again, or sudo systemctl restart bob).
 set -euo pipefail
 cd "$(dirname "$0")"
 

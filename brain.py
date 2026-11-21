@@ -136,6 +136,10 @@ DIRECTIONS = {
 }
 
 
+# Sideways moves, offered to Claude only when the wheels are mecanum (the value is the strafe: negative = left).
+STRAFES = {"strafe_left": -1.0, "strafe_right": 1.0}
+
+
 def _tool(name: str, description: str, props: dict) -> dict:
     return {
         "name": name,
@@ -151,14 +155,16 @@ def _tool(name: str, description: str, props: dict) -> dict:
 
 
 def build_tools(max_move: float, radio_peer: str | None = None, follower=None, music=None, recall: bool = False, home: bool = False,
-                tag_search: bool = False, colors: bool = False) -> list[dict]:
+                tag_search: bool = False, colors: bool = False, mecanum: bool = False) -> list[dict]:
     tools = [
         _tool("drive", (
             f"Drive in a direction for a short time (max {max_move:g}s), then stop. "
             "speed is 0.1-1.0 of the allowed top speed. arc_* curves while moving "
             "forward; spin_* turns in place."
+            + (" strafe_* slides sideways without turning (you have mecanum wheels). Your distance sensor only looks forward, so "
+               "look before you slide." if mecanum else "")
         ), {
-            "direction": {"type": "string", "enum": list(DIRECTIONS)},
+            "direction": {"type": "string", "enum": list(DIRECTIONS) + (list(STRAFES) if mecanum else [])},
             "speed": {"type": "number", "description": "0.1 to 1.0"},
             "seconds": {"type": "number", "description": f"0.1 to {max_move:g}"},
         }),
@@ -443,7 +449,7 @@ class Brain(threading.Thread):
         self.drive, self.camera, self.audio = drive, camera, audio
         self.client = anthropic.Anthropic(max_retries=2, timeout=120)
         self.tools = build_tools(drive.cfg.max_move_seconds, radio.peer if radio else None, follower, music, recall=self.index is not None, home=self.home is not None,
-                                tag_search=bool(self.home and self.home.cfg.tags), colors=colors is not None)
+                                tag_search=bool(self.home and self.home.cfg.tags), colors=colors is not None, mecanum=getattr(drive, "mecanum", False))
         prompt = SYSTEM_PROMPT + (RADIO_PROMPT.format(peer=radio.peer) if radio else "") + (MUSIC_PROMPT if music else "") + (RECALL_PROMPT if self.index else "") + (HOME_PROMPT if self.home else "")
         self.system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
         self.halt = threading.Event()
@@ -726,21 +732,29 @@ class Brain(threading.Thread):
                 return "BLOCKED: emergency stop is active (operator override). Wait for the operator.", True
             if (why := self._motion_block()):
                 return why, True
+            side = 0.0
             if name == "drive":
-                l, r = DIRECTIONS[a["direction"]]
-                s = clamp(float(a["speed"]), 0.1, 1.0)
-                l, r = l * s, r * s
+                if a["direction"] in STRAFES:
+                    if not self.drive.mecanum:
+                        return "BLOCKED: you have no mecanum wheels, so you cannot slide sideways. Turn instead.", True
+                    l = r = 0.0
+                    side = STRAFES[a["direction"]] * clamp(float(a["speed"]), 0.1, 1.0)
+                else:
+                    l, r = DIRECTIONS[a["direction"]]
+                    s = clamp(float(a["speed"]), 0.1, 1.0)
+                    l, r = l * s, r * s
             else:
                 l, r = clamp(float(a["left"]), -1, 1), clamp(float(a["right"]), -1, 1)
             secs = clamp(float(a["seconds"]), 0.0, self.drive.cfg.max_move_seconds)
-            log.info("MOVE L=%+.2f R=%+.2f for %.1fs", l, r, secs)
-            ran = self.drive.move(l, r, secs)
+            log.info("MOVE L=%+.2f R=%+.2f%s for %.1fs", l, r, f" strafe={side:+.2f}" if side else "", secs)
+            ran = self.drive.move(l, r, secs, side) if side else self.drive.move(l, r, secs)
             if self.drive.estop.is_set():
                 return f"INTERRUPTED: emergency stop after {ran:.1f}s. Wait for the operator.", True
             if self.drive.stop_reason:
                 return (f"STOPPED by your distance sensor: {self.drive.stop_reason} (ran {ran:.1f}s). "
                         "Turn or back away before going forward again."), False
-            return f"moved L={l:+.2f} R={r:+.2f} for {ran:.1f}s, now stopped. {self._range_text()}".strip(), False
+            return (f"moved L={l:+.2f} R={r:+.2f}{f' strafe={side:+.2f}' if side else ''} for {ran:.1f}s, now stopped. "
+                    f"{self._range_text()}").strip(), False
 
         if name == "look":
             if not self.camera.enabled:

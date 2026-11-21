@@ -11,7 +11,7 @@ do from the console is saved in **`tuning.json`**.
 
 1. The built-in default (in `config.py`).
 2. `config.toml`. Anything you leave out uses the default.
-3. `tuning.json` on the Pi, for `left_trim`, `right_trim`, `dc_min_duty`, `tag_min_px` and calibration results.
+3. `tuning.json` on the Pi, for `left_trim`, `right_trim`, `back_left_trim`, `back_right_trim`, `dc_min_duty`, `tag_min_px` and calibration results.
 4. Console commands such as `/speed` or `/model`, until Bob restarts.
 
 **Editing `config.toml`:**
@@ -25,6 +25,17 @@ do from the console is saved in **`tuning.json`**.
 - **A misspelled setting stops Bob from starting**, with a message naming it, such as
   `unknown setting [drive] max_sped`. The same goes for a misspelled `[section]` and for a word that isn't
   allowed, such as `type = "dcc"` (it must be `"dc"` or `"servo"`). That's deliberate, so typos don't go unnoticed.
+
+**Changing a few settings without restarting: `/set`.** The owner can type `/set` to list the settings that can change while Bob runs,
+and `/set SECTION.KEY VALUE` to change one, for example `/set colors.min_saturation 70` or `/set brain.tick_seconds 5`. It applies at once and
+saves the value in **`config.local.toml`** on the Pi, so it is still there after a restart. Add `once` (`/set brain.effort high once`) to
+change it only until Bob restarts. These can be changed this way: `colors.*` thresholds and colour-following settings (`follow_speed`, `follow_percent`, `follow_distance_cm`, `follow_search_s`), `brain.tick_seconds`, `think_when`, `idle_max_s`,
+`change_percent`, `change_distance_cm`, `max_steps_per_tick`, `effort`, `fallbacks`, and `drive.left_invert` / `right_invert`.
+Numbers must stay inside a sensible range, and a bad value changes nothing.
+
+Everything else, including pins, speed and move-time limits, the wheel set-up, remote access and alerts, still needs `config.local.toml` and a
+restart: a typed command can never loosen a safety limit or send a motor to the wrong pin. Only the owner can use `/set`, and Claude has no
+way to change settings. `./deploy.sh` never copies `config.local.toml`, so what you save with `/set` on the Pi is kept across deploys.
 
 **Your settings that differ from the defaults** are marked ★ below.
 
@@ -53,6 +64,8 @@ See [Driving and motors](05-driving-and-motors.md).
 | `dc_pwm_hz` | 20000 | how fast the motor power switches. Above hearing, so no whine |
 | `dc_min_duty` | 0.25 | the lowest power that actually turns the wheels. Live: `/minduty` |
 | `dc_brake` | true | `true` = stopped motors resist turning; `false` = they coast |
+| `dc_left_wheels`, `dc_right_wheels` | empty | tank style: name which channels are on each side (`"board1_a"`, `"board1_b"`, `"board2_a"`, `"board2_b"`). Empty = automatic (manual 05) |
+| `drive_style` | tank | `tank`, or `mecanum`: each of four mecanum wheels gets its own speed and Bob can strafe (needs `dc_wheels = 4` and both rear wheels on their own pins; manual 29) |
 | `dc_wheels` | 2 | `2`, or `4` when a second TB6612FNG drives the rear wheels (manual 01). A side's two wheels move together |
 | `dc_rear_left_pwm` / `_in1` / `_in2`, `dc_rear_right_pwm` / `_in1` / `_in2` | -1 | the rear wheels' own pins. All -1 = the second board is wired in parallel with the first. Give a side all three or none |
 | `dc_rear_standby` | -1 | the second board's STBY pin; -1 = joined to the first board's |

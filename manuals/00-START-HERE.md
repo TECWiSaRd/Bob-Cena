@@ -44,6 +44,7 @@ This folder has one manual for each part of Bob. Each manual is written so you c
 | 26 | [Face recognition](26-face-recognition.md) | let Bob learn who is who, only for people who agree |
 | 27 | [micro:bit remote](27-micro-bit.md) | drive Bob by tilting a micro:bit |
 | 28 | [Seeing colours](28-colors.md) | which colours the camera sees, and where |
+| 29 | [Mecanum wheels](29-mecanum-wheels.md) | sliding sideways with four mecanum wheels |
 
 Two more guides live in the main project folder:
 - [TRAINING_HEY_BOB.md](../TRAINING_HEY_BOB.md): training a better "Hey Bob" wake word.

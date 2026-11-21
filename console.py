@@ -87,7 +87,9 @@ class ConsoleUI:
         rows = h - 3
         wrapped: list[tuple[int, str]] = []
         need = rows + self.scroll
-        for level, tag, line in reversed(self.logbuf.lines):
+        # Other threads log all the time. Walking the live list while one adds a line raises "deque mutated during iteration"
+        # and used to take the whole console (and Bob) down, so draw from a copy.
+        for level, tag, line in reversed(list(self.logbuf.lines)):
             attr = self._attr(level, tag)
             parts = textwrap.wrap(line, w - 1, subsequent_indent="           ") or [""]
             wrapped[:0] = [(attr, p) for p in parts]

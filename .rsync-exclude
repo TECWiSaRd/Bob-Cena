@@ -13,6 +13,8 @@ __pycache__
 
 # things that exist only on the Pi (its own data and secrets); never overwrite them
 /.env
+# the Pi keeps its own settings file (/set saves into it); edit it on the Pi, or copy it over by hand
+/config.local.toml
 /memory.json
 /people.json
 /faces.json

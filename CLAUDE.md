@@ -47,7 +47,7 @@ Python (top level, stdlib + `anthropic`; hardware libs come from apt on the Pi a
 | `bob.py` | `Controller` (all `/commands` in `handle()`), `main()`, console `/help`, env/tuning loading, startup order |
 | `brain.py` | the Claude tick loop, tools, prompts, `Controls` (operator state), `Memory`, `People`, cost accounting |
 | `config.py` / `config.toml` / `config.local.toml` | dataclass defaults, shipped safe defaults, the owner's untracked overrides (read after `config.toml`). Unknown keys/sections raise. |
-| `hardware.py` | `Drive` (DC/servo, trims, speed cap, estop, reflex), `Camera` (stall guard, watchdog), `Audio` (Piper/espeak) |
+| `hardware.py` | `Drive` (DC/servo, 4 wheels, mecanum `drive_style` + strafe (manual 29; fakes only), trims, speed cap, estop, reflex), `Camera` (stall guard, watchdog), `Audio` (Piper/espeak) |
 | `listen.py` | mic: hands-free/push-to-talk, openWakeWord, faster-whisper, name-mishearing fix ("Mom" to "Bob") |
 | `vision.py` / `calibrate.py` / `sensors.py` | follow-me/find-person, turn calibration, distance sensor |
 | `home.py` / `tags.py` / `tag_tools.py` | Home Assistant lights, room awareness, AprilTag detection, `/locate`, `/goto` (TagFinder, TagGoer) |
@@ -56,7 +56,7 @@ Python (top level, stdlib + `anthropic`; hardware libs come from apt on the Pi a
 | `access.py` | per-person Wi-Fi-scoped tokens (`TOKEN_NAME`, `WIFI[ssid]=NAME`), lockout |
 | `remote.py` / `console.py` | shared console over a unix socket (SO_PEERCRED + groups `bobops`/`bobview`); curses UI; stderr capture |
 | `power.py` / `update.py` / `version.py` | two-step `/shutdown`; `/update` from GitHub (git checkout, rollback); code fingerprints |
-| `colors.py` | named colour patches in the camera picture (HSV masks, biggest blob per colour, bearing); `/color`, Claude's read-only `see_colors` tool (manual 28; tested with synthetic pictures only) |
+| `colors.py` | named colour patches in the camera picture (HSV masks, biggest blob per colour, bearing); `/color`, Claude's read-only `see_colors` tool, `/color follow COLOR` (`ColorFollower`: drives toward a colour until stopped; operator-only, no Claude tool) (manual 28; tested with synthetic pictures only) |
 | `microbit.py` | drive with a BBC micro:bit over USB serial, a radio bridge, or Bluetooth LE (`BleLink`, bleak, Nordic UART): `D x y` while A held, `M`, `E`, `T`, `C`; optional key; programs in `microbit/` (manual 27; not tested on hardware) |
 | `faces.py` | opt-in face recognition (SFace via OpenCV): embeddings only in `faces.json`, two-step `/face remember`, `/face improve`, no Claude tool (manual 26) |
 | `identity.py` | who a person is: owner / Pi login / app-only, case-insensitive; who may invite whom (26.12 phase A, in progress) |
@@ -100,6 +100,11 @@ After pulling: `./install.sh --service && sudo systemctl daemon-reload` if `bob.
   (web dashboard and app devices). `Controller.handle(line, by=None, role="owner")`. `/shutdown` for `dashboard` is off by default (`[power] who`).
 - **Manual drive is per person:** `drive_users` (names; the local console is `"console"`, the Xbox controller is `"gamepad"`);
   `/drive all` means everyone attached at that moment. Leaving or disconnecting removes only that person.
+- **`/set SECTION.KEY VALUE`** (owner only) changes a setting live and saves it to `config.local.toml`; only keys in `config.LIVE_SETTINGS` (read fresh every time, each with a range)
+  are allowed. Pins, speed/move-time limits and the wheel set-up are deliberately NOT live. `deploy.sh` never copies `config.local.toml` (the Pi keeps its own).
+- **Trims are per wheel and per direction:** `left_trim`/`right_trim` going forward, `back_left_trim`/`back_right_trim` for a wheel commanded backward (judged before the left/right
+  invert). `/trim`, `/trim back ...`; `/calibrate straight go [SECONDS] [forward|back]` measures each part and saves only the part it ran. Tank/mecanum/layout (`dc_left_wheels`,
+  `dc_right_wheels`) live in `hardware.Tb6612`; all of it is tested with fakes only.
 - **Think only on change:** `[brain] think_when = "change"` uses `ChangeGate` (picture change %, distance, mail, heartbeat). Sleep mode uses
   stricter thresholds and blocks the AI's driving.
 - **Camera hangs:** `Camera._take` never queues behind a stuck capture; `watch()` fires `camera_stuck` which stops the wheels and, only under

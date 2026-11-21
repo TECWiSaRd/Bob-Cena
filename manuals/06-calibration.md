@@ -53,7 +53,12 @@ rates go into every status report Claude sees.
 
 **What happens:** Bob drives forward about half a metre at speed 0.6, then reverses back. He does this
 twice: once as he is, and once with the right wheel nudged slightly faster. From how the view turned during
-each run, he works out the trim that cancels the drift.
+each run, he works out the trim that cancels the drift. **Then he does the same going backward** (backward out, forward back, twice), because
+many motors drift differently backward than forward, and sets a separate set of trims for backing up. He needs about a metre of clear floor
+**behind** him as well as ahead (his distance sensor can't see behind). You can also run the parts separately: `/calibrate straight go forward` does only the forward part and `/calibrate straight go back` only the backing-up part
+(add a run length too, like `/calibrate straight go 0.6 back`). A part that you didn't run leaves its saved trims exactly as they were, and each run saves
+its own results, so doing them one after the other gives the same result as doing both at once.
+If only the backing-up measurement fails, the forward trim is still saved, and the log says so: set the reverse trim by hand with `/trim back left` or `/trim back right`.
 
 **Result:** the log says, for example:
 
@@ -61,8 +66,13 @@ each run, he works out the trim that cancels the drift.
 CALIB done: drift +3.4 deg/s before; trims now left +0.000, right -0.076 - saved. Run /fwd 3 to check it
 ```
 
-Check it worked: `/speed 0.6`, then `/fwd 3`. He should now go straight. If not, run it again, or fine-tune
+When it also fixed the reverse drift, a second line says so (`backing up drifted ...; back trims now ...`).
+
+Check it worked: `/speed 0.6`, then `/fwd 3` and `/back 3`. He should now go straight. If not, run it again, or fine-tune
 by hand with `/trim` ([manual 05](05-driving-and-motors.md)).
+
+**A shorter run:** if it says it couldn't measure the drift, the view may be changing too much while he drives. `/calibrate straight go 0.6` makes each run 0.6 seconds instead of the usual
+1.2 (between 0.4 and 2 is allowed). If a run can't be measured, Bob also repeats it by himself, each time a bit shorter, and always drives back by the same amount he went out.
 
 ## Other commands
 
@@ -95,9 +105,12 @@ Calibration never changes anything unless it got a clear measurement. Messages y
 | `pause Bob first` | the AI is running | `/pause` |
 | `E-stop active` | the emergency stop is on | `/clear` |
 | `calibration needs the camera` | the camera is off or missing | `/camera on` |
-| `the scene doesn't have enough detail` | blank wall or plain view | point him at furniture |
+| `couldn't measure the drift: ...` or `couldn't measure the turn: ...` | the picture couldn't be measured. The message says why: too plain or too dark, too few corners to track, points that couldn't be followed (blurred, or the view changed too much), or points that disagreed (something moved in front of the camera). A straight run that can't be measured is retried up to three times, and Bob drives back to where he started after each | point him at furniture or a bookshelf 2 to 3 metres away with the lights on, not a blank wall or a close wall |
 | `the turn was too big to measure safely` | he turns very fast | lower `/speed` and try again |
 | `Bob didn't turn left at speed 0.4` | a wheel is reversed, or too weak to move in a short burst | check `/left 0.5`; raise `/minduty` |
 | `Bob was stopped early` | something blocked the straight run | clear the floor in front of him |
 | `less than 80 cm of clear floor ahead` | the distance sensor sees something | clear the path |
 | `the probe changed the drift by too little` | the measurement was too noisy to trust | try a more textured scene, and run it again |
+
+**Check the direction after a straight calibration.** The result assumes the camera's picture and the wheels agree on which way is left. After it saves a trim, run `/fwd 3`: if he drifts **more** than
+before, the sign is the wrong way round (for example a camera mounted upside down or mirrored, or a wheel direction that is still reversed). Undo it with `/trim reset` and tell whoever is looking after the code.

@@ -1,6 +1,9 @@
 """Configuration: dataclass defaults, overridden by config.toml."""
 from __future__ import annotations
 
+import json
+import os
+import re
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -16,6 +19,8 @@ class DriveConfig:
     right_invert: bool = True
     left_trim: float = 0.0       # drift fix. DC: speed scale (+0.05 = that wheel 5% faster); servo: pulse shift
     right_trim: float = 0.0
+    back_left_trim: float = 0.0  # the same drift fix for a wheel that is being driven BACKWARD (motors rarely behave the same both ways)
+    back_right_trim: float = 0.0
     min_pulse_ms: float = 1.0
     max_pulse_ms: float = 2.0
     max_speed: float = 0.8       # hard cap applied to every command (0-1)
@@ -33,6 +38,9 @@ class DriveConfig:
     dc_brake: bool = True        # stopped motors resist turning (False = coast)
     # --- four wheels, a second TB6612FNG (type = "dc"; manual 05). A side's two wheels always get the same command ---
     dc_wheels: int = 2           # 2, or 4 when a second TB6612FNG drives the rear wheels
+    # "tank": a side's wheels always move together. "mecanum": each of four mecanum wheels gets its own speed, so Bob can strafe
+    # sideways and turn cleanly (manual 29). Needs dc_wheels = 4 and BOTH rear wheels on their own pins (dc_rear_*).
+    drive_style: str = "tank"
     # The rear driver's pins. Leave them -1 and Bob assumes its control wires are in PARALLEL with the front driver's (the same GPIO
     # pins feed both boards, no extra pins needed). Give a side all three of its pins to control its rear wheel separately instead.
     dc_rear_left_pwm: int = -1   # rear PWMA
@@ -44,6 +52,11 @@ class DriveConfig:
     dc_rear_standby: int = -1    # rear STBY; -1 = joined to the front STBY wire
     rear_left_invert: bool = False    # flip a rear wheel that spins the wrong way compared with the front wheel on its side
     rear_right_invert: bool = False
+    # Which motor channel is on which side (tank style). Empty = automatic: board 1's A and B are left and right, and board 2's A and B (if it
+    # has its own pins) join them. Name channels "board1_a", "board1_b", "board2_a", "board2_b": for example a robot with one wheel on each
+    # board's A channel is dc_left_wheels = ["board1_a"], dc_right_wheels = ["board2_a"] (manual 05). Board 2 needs its own pins (dc_rear_*).
+    dc_left_wheels: list = field(default_factory=list)
+    dc_right_wheels: list = field(default_factory=list)
     estop_button_pin: int = -1   # optional physical E-stop button to GND; -1 = none
 
 
@@ -317,6 +330,14 @@ class ColorsConfig:
     white_saturation: int = 40   # white = this pale or paler...
     white_value: int = 190       # ...and at least this bright
     black_value: int = 45        # black = darker than this
+    # /color follow COLOR: Bob turns toward the colour and drives up to it, until someone stops him (manual 28)
+    follow_speed: float = 0.4    # top speed while following (the /speed cap still applies on top)
+    follow_percent: float = 15.0 # he stops coming closer once the colour fills this much of the picture (how near he gets)
+    follow_distance_cm: int = 0  # with a distance sensor: stop coming closer at this distance (cm). 0 = go by picture size only. Keep it above [sensor] stop_cm
+    follow_deadzone: float = 0.10   # ignore a colour this close to the centre line (0 = centre, 1 = edge)
+    follow_turn_gain: float = 0.9
+    follow_search_s: float = 0.0 # when the colour is out of sight he turns on the spot until he finds it. 0 = keep turning for as long as it takes;
+                                 # otherwise give up after this many seconds, wait still and keep watching
 
 
 @dataclass
@@ -374,8 +395,105 @@ CHOICES = {
     ("music", "airplay_bus"): ("session", "system"),
     ("home", "tag_family"): ("tag36h11", "tag25h9", "aruco4x4_50"),
     ("update", "channel"): ("commit", "release"),
+    ("drive", "drive_style"): ("tank", "mecanum"),
     ("brain", "effort"): ("low", "medium", "high", "xhigh", "max"),
 }
+
+
+# Settings /set may change while Bob runs. Only ones that are read fresh every time they are used belong here (checked one by one),
+# each with the range it may take. Pins, wheel counts, speed and move-time limits are NOT here: change those in config.local.toml
+# and restart, so a typed command can never loosen a safety limit or point a motor at the wrong pin.
+LIVE_SETTINGS = {
+    ("colors", "min_percent"): (0.1, 50.0),
+    ("colors", "min_saturation"): (0, 255),
+    ("colors", "min_value"): (0, 255),
+    ("colors", "white_saturation"): (0, 255),
+    ("colors", "white_value"): (0, 255),
+    ("colors", "black_value"): (0, 255),
+    ("colors", "follow_speed"): (0.1, 1.0),
+    ("colors", "follow_percent"): (1.0, 80.0),
+    ("colors", "follow_distance_cm"): (0, 300),
+    ("colors", "follow_search_s"): (0.0, 3600.0),
+    ("brain", "tick_seconds"): (0.5, 600.0),
+    ("brain", "think_when"): None,
+    ("brain", "idle_max_s"): (5.0, 3600.0),
+    ("brain", "change_percent"): (0.1, 100.0),
+    ("brain", "change_distance_cm"): (1.0, 400.0),
+    ("brain", "max_steps_per_tick"): (1, 20),
+    ("brain", "effort"): None,
+    ("brain", "fallbacks"): None,
+    ("drive", "left_invert"): None,
+    ("drive", "right_invert"): None,
+}
+
+
+def parse_setting(section: str, key: str, text: str):
+    """The typed value for `/set section.key text`. Raises ValueError with a plain sentence if it can't be used."""
+    if (section, key) not in LIVE_SETTINGS:
+        raise ValueError(f"{section}.{key} can't be changed while Bob runs. Edit config.local.toml and restart him "
+                         f"(/set works on: {', '.join(f'{s}.{k}' for s, k in LIVE_SETTINGS)})")
+    default = getattr(getattr(Config(), section), key)
+    text = text.strip()
+    if isinstance(default, bool):
+        if text.lower() not in ("true", "false", "on", "off", "yes", "no"):
+            raise ValueError(f"{section}.{key} is on or off")
+        value = text.lower() in ("true", "on", "yes")
+    elif isinstance(default, int):
+        try:
+            value = int(text)
+        except ValueError:
+            raise ValueError(f"{section}.{key} should be a whole number") from None
+    elif isinstance(default, float):
+        try:
+            value = float(text)
+        except ValueError:
+            raise ValueError(f"{section}.{key} should be a number") from None
+        if value != value or value in (float("inf"), float("-inf")):
+            raise ValueError(f"{section}.{key} should be a number")
+    else:
+        value = text
+    allowed = CHOICES.get((section, key))
+    if allowed and str(value).lower() not in allowed:
+        raise ValueError(f"{section}.{key} should be one of: {', '.join(allowed)}")
+    bounds = LIVE_SETTINGS[(section, key)]
+    if bounds and not bounds[0] <= value <= bounds[1]:
+        raise ValueError(f"{section}.{key} should be between {bounds[0]:g} and {bounds[1]:g}")
+    return value
+
+
+def _toml_value(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    return repr(value)
+
+
+def save_local(path: Path, section: str, key: str, value) -> None:
+    """Put `key = value` under [section] in config.local.toml, keeping the rest of the file (and its comments) as it is."""
+    text = path.read_text() if path.exists() else ""
+    lines = text.splitlines()
+    header = re.compile(rf"^\s*\[{re.escape(section)}\]\s*(#.*)?$")
+    any_header = re.compile(r"^\s*\[")
+    new_line = f"{key} = {_toml_value(value)}"
+    start = next((i for i, l in enumerate(lines) if header.match(l)), None)
+    if start is None:
+        lines += ([""] if lines and lines[-1].strip() else []) + [f"[{section}]", new_line]
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if any_header.match(lines[i])), len(lines))
+        found = next((i for i in range(start + 1, end) if re.match(rf"^\s*{re.escape(key)}\s*=", lines[i])), None)
+        if found is not None:
+            lines[found] = new_line
+        else:
+            at = end
+            while at > start + 1 and not lines[at - 1].strip():      # after the section's last real line, not after its blank gap
+                at -= 1
+            lines.insert(at, new_line)
+    out = "\n".join(lines) + "\n"
+    tomllib.loads(out)                                               # never write a file Bob could not read back
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(out)
+    os.replace(tmp, path)
 
 
 def load(path: Path) -> Config:

@@ -102,7 +102,9 @@ No two motors are identical, so one wheel is usually a little faster. Trim scale
 | `/trim left 0.05` | left wheel 5% faster |
 | `/trim right -0.03` | right wheel 3% slower |
 | `/trim` | shows the current values |
-| `/trim reset` | back to zero |
+| `/trim back left 0.03`, `/trim back right -0.02` | the same fix for a wheel being driven **backward** (motors often drift differently backward) |
+| `/trim back reset` | clears only the backward trims |
+| `/trim reset` | back to zero (forward and backward) |
 
 To find the right value by hand: put Bob on the floor, `/speed 0.6`, `/fwd 3`, and watch which way he
 drifts. Drifts **left** → the left wheel is slow → `/trim left 0.05`. Repeat until he goes straight. Or let
@@ -150,12 +152,15 @@ All under `[drive]` in `config.toml`. Details: [settings reference](15-settings-
 | `max_speed` | 0.8 | speed cap (0-1) |
 | `max_move_seconds` | 3.0 | longest single move |
 | `left_invert` / `right_invert` | false / true | wheel direction |
-| `left_trim` / `right_trim` | 0.0 | drift correction |
+| `left_trim` / `right_trim` | 0.0 | drift correction going forward |
+| `back_left_trim` / `back_right_trim` | 0.0 | the same, for a wheel driven backward. In a spin, the wheel that goes backward uses its back trim. Live: `/trim back left X` |
 | `dc_min_duty` | 0.25 | lowest working power |
 | `dc_brake` | true | brake (true) or coast (false) |
 | `dc_pwm_hz` | 20000 | motor switching speed (above hearing) |
 | `dc_left_pwm`, `dc_left_in1`, ... `dc_standby` | 12, 5, 6, 13, 16, 20, 21 | motor driver pins |
 | `dc_wheels` | 2 | 2, or 4 with a second TB6612FNG for the rear wheels (wiring in manual 01) |
+| `dc_left_wheels`, `dc_right_wheels` | empty | which motor channels are on each side: `"board1_a"`, `"board1_b"`, `"board2_a"`, `"board2_b"` (see below) |
+| `drive_style` | tank | `tank`, or `mecanum` for four mecanum wheels that can slide sideways (manual 29) |
 | `dc_rear_left_pwm`, `_in1`, `_in2`, `dc_rear_right_...` | -1 | rear wheels on their own pins; -1 = wired in parallel with the front board |
 | `dc_rear_standby` | -1 | the second board's STBY pin; -1 = joined to the front STBY |
 | `rear_left_invert` / `rear_right_invert` | false | a rear wheel that turns the opposite way to the front one |
@@ -175,3 +180,30 @@ All under `[drive]` in `config.toml`. Details: [settings reference](15-settings-
 | Bob tips when a wheel jams | high, narrow body | lower the battery, add a rear skid, lower `max_speed` |
 | Servos twitch instead of spinning | standard 180° servos | use continuous-rotation servos |
 | Servos jitter | no hardware PWM | add the overlay line and reboot |
+
+
+## Choosing which channel is on which side
+
+Normally board 1's channel A is the left wheel and channel B the right, and a second board joins in on the same sides. If you want a different
+arrangement, for example **one wheel on each board's A channel** (useful when a B channel doesn't work), say so with two settings:
+
+```toml
+[drive]
+dc_wheels = 4
+# board 2's channel A on its OWN three Pi pins (not shared with board 1):
+dc_rear_left_pwm = 18
+dc_rear_left_in1 = 27
+dc_rear_left_in2 = 22
+dc_left_wheels = ["board1_a"]     # board 1 channel A (the dc_left_* pins): the left wheel
+dc_right_wheels = ["board2_a"]    # board 2 channel A (the dc_rear_left_* pins): the right wheel
+```
+
+- Names are `board1_a` (the `dc_left_*` pins), `board1_b` (`dc_right_*`), `board2_a` (`dc_rear_left_*`) and `board2_b` (`dc_rear_right_*`).
+- A channel you don't name is never switched on, and its pins are left alone.
+- **Board 2 needs its own pins.** If its inputs share the same wires as board 1's (the easy parallel wiring), Bob can't tell the two apart, and
+  config can't change that: move board 2's PWMA, AIN1 and AIN2 onto three free Pi pins and list them as `dc_rear_left_*` as above.
+- Set both lists or neither. A channel can only be on one side, and Bob refuses to start the wheels (and simulates) if a name is wrong or a channel's pins are missing.
+- `left_trim` and `/trim` follow the side a wheel is on. `left_invert` / `right_invert` also follow the side; `rear_left_invert` / `rear_right_invert` stay with board 2's channel A and B.
+- Not for `drive_style = "mecanum"`, which drives all four wheels itself.
+
+Like the rest of the four-wheel support, this has only been tested with pretend pins.

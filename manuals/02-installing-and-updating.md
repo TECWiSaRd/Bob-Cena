@@ -65,8 +65,8 @@ cd ~/Documents/"Bob Cena"
 ./deploy.sh --dry-run          # only shows what it would copy
 ```
 
-- It copies the code, the manuals and your `config.toml` / `config.local.toml`. It leaves out the **`app/` folder** (a gigabyte of build files the Pi
-  never uses), the **git history**, and the Pi's own data and secrets (`.env`, notes, tuning, certificates, paired devices, logs). The list is in `.rsync-exclude`.
+- It copies the code, the manuals and your `config.toml`, but **not** `config.local.toml`: the Pi keeps its own. It leaves out the **`app/` folder** (a gigabyte of build files the Pi
+  never uses), the **git history**, and the Pi's own data and secrets (`.env`, `config.local.toml`, notes, tuning, certificates, paired devices, logs). The list is in `.rsync-exclude`.
 - The first copy works exactly the same way.
 - Prefer `/update` once it's set up (manual 23): it takes a whole, matching set of files from GitHub, and then you don't copy by hand at all.
 
@@ -79,7 +79,7 @@ cd ~/Documents/"Bob Cena"
 | the `manuals/` folder | `memory.json` (Bob's notes), `people.json`, `usage.json` (the all-time cost count) |
 | `wakewords/` (your wake word model) | `logs/`, `captures/`, `voices/`, `models/`, `sounds/`, `.venv/` |
 
-**Your own settings go in `config.local.toml`** (next to `config.toml`). It is read after `config.toml`, wins over it, and
+**Your own settings go in `config.local.toml`** (next to `config.toml`, on the Pi: `./deploy.sh` never copies it, so edit it there with `nano ~/bob/config.local.toml`, or use `/set` for a few settings; to send the Mac's copy once, `scp config.local.toml adam@bob:~/bob/`). It is read after `config.toml`, wins over it, and
 is never committed to git, so the shared `config.toml` keeps its safe defaults (timeline, Home Assistant, shared console and
 the AI search all off). Copy only the lines you change, for example:
 

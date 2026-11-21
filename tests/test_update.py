@@ -300,7 +300,7 @@ class DeployTests(unittest.TestCase):
                 path.write_text("x")
             subprocess.run(["rsync", "-a", f"--exclude-from={self.root / '.rsync-exclude'}", f"{src}/", f"{dst}/"], check=True)
             sent = {str(p.relative_to(dst)) for p in dst.rglob("*") if p.is_file()}
-            self.assertEqual(sent, {"bob.py", "tags.py", "certs.py", "config.local.toml", "manuals/01.md", "tests/test_x.py",
+            self.assertEqual(sent, {"bob.py", "tags.py", "certs.py", "manuals/01.md", "tests/test_x.py",      # (config.local.toml stays on the Pi)
                                     "tests/app_test_server.py", "wakewords/hey_bob.onnx", "bob.service"})
 
     def test_the_script_is_valid_shell_with_help_and_refuses_odd_options(self):
