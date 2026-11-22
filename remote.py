@@ -188,6 +188,10 @@ class RemoteConsole:
             for c in self.clients:
                 c.alive = False
                 try:
+                    c.conn.shutdown(socket.SHUT_RDWR)    # on Linux a plain close() does not wake the thread waiting to read, and the other end never hears it
+                except OSError:
+                    pass
+                try:
                     c.conn.close()
                 except OSError:
                     pass

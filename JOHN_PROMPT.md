@@ -446,7 +446,7 @@ class Radio(threading.Thread):
                 buf += chunk
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
-                    if self._handle(line):
+                    if self._on_line(line):
                         last_heard = time.monotonic()
                 if len(buf) > MAX_LINE:
                     buf = b""
@@ -466,7 +466,7 @@ class Radio(threading.Thread):
             if self.role == "connect":
                 self._quit.wait(3)
 
-    def _handle(self, line: bytes) -> bool:
+    def _on_line(self, line: bytes) -> bool:
         """Process one received line. Returns True if it was a valid message from our peer."""
         if len(line) > MAX_LINE:
             self.rejected += 1

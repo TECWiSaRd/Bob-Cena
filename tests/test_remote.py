@@ -22,6 +22,16 @@ from remote import RemoteConsole, RemoteController, encode  # noqa: E402
 OWNER_UID = os.getuid()
 
 
+def hang_up(sock) -> None:
+    """Close a client's end the way a dying terminal or a lost connection does. On Linux a plain close() from another thread does not
+    wake the thread waiting to read from the same socket, so the other end would never hear it."""
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+    sock.close()
+
+
 def wait_for(cond, seconds=3.0):
     end = time.time() + seconds
     while time.time() < end:
@@ -267,7 +277,7 @@ class RemoteTests(unittest.TestCase):
         kai = self.connect((OWNER_UID + 1, "kai", {"bobops"}))
         self.assertTrue(wait_for(lambda: kai.drive_mode))
         stops = self.ctrl.stops
-        kai.sock.close()                                           # closed terminal, lost Wi-Fi
+        hang_up(kai.sock)                                          # closed terminal, lost Wi-Fi
         self.assertTrue(wait_for(lambda: self.ctrl.drive_mode is False))
         self.assertGreater(self.ctrl.stops, stops)                 # and the wheels were stopped
 
@@ -304,7 +314,7 @@ class RemoteTests(unittest.TestCase):
     def test_who_lists_people_and_forgets_them_when_they_leave(self):
         a = self.connect((OWNER_UID + 1, "alex", {"bobops"}))
         self.assertTrue(wait_for(lambda: "alex (operator)" in self.server.describe()))
-        a.sock.close()
+        hang_up(a.sock)
         self.assertTrue(wait_for(lambda: "nobody attached" in self.server.describe()))
 
     def test_a_slow_client_never_blocks_the_others(self):

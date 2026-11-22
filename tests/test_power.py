@@ -257,7 +257,8 @@ class InstallPower(unittest.TestCase):
 
     def test_odd_account_names_are_refused(self):
         for bad in ("a b", "adam;rm", "x\\y", ""):
-            r = self.run_script("--yes", env={"BOB_OWNER": bad})
+            # (with no name given the script falls back to the login in $USER, so that one is emptied too: an empty owner is what is refused)
+            r = self.run_script("--yes", env={"BOB_OWNER": bad, "USER": ""})
             self.assertNotEqual(r.returncode, 0, bad)
         self.assertFalse(self.file.exists())
 

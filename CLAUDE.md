@@ -79,6 +79,8 @@ python3 -m venv /tmp/bobtest && /tmp/bobtest/bin/pip install -r requirements.txt
 /tmp/bobtest/bin/python -m unittest discover -s tests      # about 460 tests, about 1 minute
 ```
 
+To keep the Mac fast the Python suite can run on a spare Pi instead: `tools/remote_tests.sh adam@HOST [unittest args]` copies the project to `~/bob-tests` there (never `~/bob`) and runs it (the Dart tests stay on the Mac).
+
 Flutter (the owner's SDK is at `/Users/Adam/Documents/flutter`; add it to PATH):
 
 ```bash
