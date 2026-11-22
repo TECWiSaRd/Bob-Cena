@@ -46,6 +46,7 @@ This folder has one manual for each part of Bob. Each manual is written so you c
 | 28 | [Seeing colours](28-colors.md) | which colours the camera sees, and where |
 | 29 | [Mecanum wheels](29-mecanum-wheels.md) | sliding sideways with four mecanum wheels |
 | 30 | [Dancing](30-dancing.md) | a little dance that keeps him roughly in one spot |
+| 31 | [Bluetooth control](31-bluetooth-control.md) | controlling Bob without Wi-Fi (stage 1: Bob's side and a check tool) |
 
 Two more guides live in the main project folder:
 - [TRAINING_HEY_BOB.md](../TRAINING_HEY_BOB.md): training a better "Hey Bob" wake word.

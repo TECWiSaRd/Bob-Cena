@@ -348,6 +348,13 @@ class ColorsConfig:
 
 
 @dataclass
+class BleConfig:
+    enabled: bool = False        # control Bob from the Bob app over Bluetooth LE when there is no Wi-Fi (manual 31). Needs: pip install bless, BlueZ, and the app paired once over the network
+    open_estop: bool = True      # anyone nearby may send the emergency stop without a key (it only ever stops him)
+    max_per_second: float = 20.0 # the most messages per second he will act on
+
+
+@dataclass
 class DanceConfig:
     enabled: bool = True         # /dance: a little routine of wiggles, spins and steps that keeps him roughly where he is (manual 30)
     speed: float = 0.5           # how fast the moves are (the /speed cap still applies on top)
@@ -394,6 +401,7 @@ class Config:
     faces: FacesConfig = field(default_factory=FacesConfig)
     colors: ColorsConfig = field(default_factory=ColorsConfig)
     dance: DanceConfig = field(default_factory=DanceConfig)
+    ble: BleConfig = field(default_factory=BleConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
 
     def robot_name(self) -> str:

@@ -237,6 +237,11 @@ follow_deadzone = 0.10
 follow_turn_gain = 0.9
 follow_search_s = 0.0      # colour out of sight: he turns on the spot until he finds it (0 = for as long as it takes; or give up after this many seconds, then wait still)
 
+[ble]
+enabled = false            # control Bob from the Bob app over Bluetooth LE when there is no Wi-Fi (manual 31). Needs: pip install bless, BlueZ, and the app paired once over the network
+open_estop = true          # anyone nearby may send the emergency stop without a key (it only ever stops him)
+max_per_second = 20.0
+
 [dance]
 enabled = true             # /dance: wiggles, spins and out-and-back steps that keep him roughly in one spot (manual 30)
 speed = 0.5                # how fast the moves are (the /speed cap still applies on top)

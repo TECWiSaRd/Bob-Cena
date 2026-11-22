@@ -131,6 +131,27 @@ class DeviceStore:
                         pass
         return found
 
+    def ble_key(self, ident: str) -> str | None:
+        """The key this device signs its Bluetooth messages with (made the first time it is asked for, kept with the device, gone when it is
+        unpaired). None if there is no such device."""
+        with self._lock:
+            info = self.devices.get(ident)
+            if info is None:
+                return None
+            if not info.get("ble_key"):
+                info["ble_key"] = secrets.token_hex(32)
+                self._save()
+            return info["ble_key"]
+
+    def ble_lookup(self, short: str) -> tuple[str, str] | None:
+        """(device, key) for the short id used in Bluetooth messages, or None. Only devices that were given a key can be found."""
+        from blecodec import short_id
+        with self._lock:
+            for ident, info in self.devices.items():
+                if info.get("ble_key") and hmac.compare_digest(short_id(ident), str(short)):
+                    return ident, info["ble_key"]
+        return None
+
     def principal_of(self, ident: str) -> Principal | None:
         """The person a device belongs to, or None for a device paired before people were recorded."""
         with self._lock:
@@ -330,6 +351,13 @@ def handle_v1(h, server, method: str, url, query) -> None:
             c.drive.stop()
             return h._json({"output": ""})
         return h._json({"output": c.manual(left, right, 0.4)})
+    if path == "/ble" and method == "POST":
+        if who not in server.devices.devices:                               # an older dashboard token has no device to give a key to
+            return h._json({"error": "only a paired device can use Bluetooth"}, 403)
+        from blecodec import RX, SERVICE, TX, short_id
+        ble = getattr(c.cfg, "ble", None)
+        return h._json({"key": server.devices.ble_key(who), "device": short_id(who), "service": SERVICE, "rx": RX, "tx": TX,
+                        "enabled": bool(ble and ble.enabled), "name": c.cfg.robot_name() if hasattr(c.cfg, "robot_name") else "Bob"})
     if path == "/snapshot" and method == "GET":
         frame = server.hub.get()
         if frame is None:

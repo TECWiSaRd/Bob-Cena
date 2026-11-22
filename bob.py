@@ -39,6 +39,7 @@ from identity import Identity, IdentityError
 from faces import FaceBook, FaceService, SFaceBackend
 from colors import NAMES as COLOR_NAMES, ColorFinder, ColorFollower
 from dance import NAMES as DANCE_NAMES, Dancer
+from blelink import BleCore, BleLink
 from vision import FaceDetector, Follower
 from access import AccessPolicy
 from stream import StreamServer
@@ -92,6 +93,7 @@ Commands (text without a leading / is said to Bob; /ask TEXT makes him answer no
   /radio                Bluetooth link to the other robot: status. Also: log [n], say <text>, on|off, ai on|off
   /music                Bluetooth/AirPlay speaker: status. Also: play|pause|next|prev, vol N|up|down, pair [secs], devices, forget MAC, ai on|off
   /calibrate turn|straight|show  Bob measures his own turn rates / drift with the camera (add 'go' to run)
+  /ble                  Bluetooth control from the Bob app (manual 31): is it running, who has been talking to him
   /dance [name] [secs]  a little dance that keeps him roughly in one spot: party, wiggle, spin or steps (/dance off stops it)
   /color follow COLOR   drive toward that colour until stopped (/color follow off, /stop, /estop); /color alone just looks
   /follow [seconds]     follow the nearest face (default 30 s); /follow off stops it
@@ -242,6 +244,13 @@ class Controller:
                                  lambda: SFaceBackend(BASE / "models"))
         self.colors = None
         self.color_follower = None
+        self.ble = None
+        if cfg.ble.enabled:
+            if self.stream is None:
+                log.warning("Bluetooth control needs the Bob app's secure port ([stream] enabled): it is off")
+            else:
+                core = BleCore(cfg.ble, self, self.stream.devices, run_command=self.stream.run_command, label_of=self.stream.person_label)
+                self.ble = BleLink(core, cfg.robot_name())
         self.dancer = Dancer(cfg.dance, self.drive, sound=lambda n: self.background(self.audio.play, n)) if cfg.dance.enabled else None
         if cfg.colors.enabled:
             try:
@@ -302,6 +311,8 @@ class Controller:
             steps.append(("the radio", self.radio.start))
         if self.music:
             steps.append(("music", self.music.start))
+        if self.ble:
+            steps.append(("Bluetooth control", self.ble.start))
         steps.append(("the microphone", self.listener.start))     # the heaviest (speech model, wake word): last
         if not self.cfg.startup.stagger:
             for _, fn in steps:
@@ -917,6 +928,8 @@ class Controller:
         self._staging_halt.set()
         self.follower.stop("shutting down")
         self.stop_color_follow("shutting down")
+        if self.ble:
+            self.ble.stop()
         if self.music:
             self.music.stop()     # puts the music volume back if it was ducked
         if self.gamepad:
@@ -1117,6 +1130,11 @@ class Controller:
                 return self.color_command(arg)
             case "dance":
                 return self.dance_command(arg.lower().split())
+            case "ble" | "bluetooth":
+                if not self.ble:
+                    return "Bluetooth control is off ([ble] enabled = true in config.local.toml, and pip install bless; manual 31)"
+                state = "running" if self.ble.running else f"NOT running ({self.ble.error or 'starting'})"
+                return f"Bluetooth control {state}: {self.ble.core.status()}"
             case "usage" | "cost":
                 return self.controls.usage.report(c.cost)
             case "think":

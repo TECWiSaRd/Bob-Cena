@@ -32,6 +32,8 @@ echo "== Laser distance sensor library (only needed if you fit a VL53L1X; manual
 echo "== micro:bit support (only needed if you drive Bob with a micro:bit; manual 27)"
 .venv/bin/pip install pyserial || echo "(pyserial not installed; fine unless you use a micro:bit)"
 .venv/bin/pip install bleak || echo "(bleak not installed; fine unless you use a micro:bit over Bluetooth)"
+echo "== Bluetooth control from the Bob app (only needed for [ble] enabled = true; manual 31)"
+.venv/bin/pip install bless || echo "(bless not installed; fine unless you use the app over Bluetooth)"
 sudo usermod -aG dialout "$USER" || true     # lets this account open USB serial ports (log out and in, or reboot, once)
 
 echo "== Speech recognition (faster-whisper, for the USB microphone)"
