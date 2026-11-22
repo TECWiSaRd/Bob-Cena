@@ -458,6 +458,18 @@ class TheKeyIsGivenOverTheNetwork(unittest.TestCase):
         self.assertEqual(self.call("POST", "/api/v1/ble")[0], 401)
         self.assertEqual(self.call("POST", "/api/v1/ble", "not-a-token")[0], 401)
 
+    def test_two_requests_in_a_row_on_one_connection_both_work(self):
+        """The first version of the endpoint left its request body unread, which spoiled the next request on the same connection."""
+        _, token = self.paired("Keeper")
+        c = http.client.HTTPSConnection("127.0.0.1", self.port, timeout=5, context=self.ctx)
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+        for path in ("/api/v1/ble", "/api/v1/ble", "/api/v1/status"):
+            c.request("POST" if "ble" in path else "GET", path, b"{}" if "ble" in path else None, headers)
+            r = c.getresponse()
+            r.read()
+            self.assertEqual(r.status, 200, path)
+        c.close()
+
     def test_unpairing_takes_the_key_with_it(self):
         ident, token = self.paired()
         self.call("POST", "/api/v1/ble", token)

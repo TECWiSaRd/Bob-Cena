@@ -23,7 +23,7 @@ The welcome uses the name you give when you pair (or "Adam" from a device called
 
 | Section | |
 |---|---|
-| **Drive** | live camera, a thumb stick (or W A S D / arrows and Space = emergency stop on a Mac), a Slow switch, and two on/off switches: **AI thinking** and **Follow me** |
+| **Drive** (with a **Bluetooth** card for when there is no Wi-Fi: [manual 31](31-bluetooth-control.md)) | live camera, a thumb stick (or W A S D / arrows and Space = emergency stop on a Mac), a Slow switch, and two on/off switches: **AI thinking** and **Follow me** |
 | **Status** | what he's doing, what Claude has cost (this run, today, all time), the Pi's temperature, load, memory and power warnings, recent events |
 | **Chat** | the live log, and a box to talk to him or type a `/command` |
 | **More** | on/off switches for **AI thinking, Follow me, Sleep, Sound, Camera and Emergency stop** (blue or red when on, white when off; the screen changes at once and flips back if Bob can't be reached), `/check`, `/usage`, **go to a room** (the Go button becomes Stop while he's on the way), light/dark, music, and unpairing |

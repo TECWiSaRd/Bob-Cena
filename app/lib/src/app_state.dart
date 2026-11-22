@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 
 import 'app_update.dart';
+import 'ble_link.dart';
 import 'client.dart';
 import 'discovery.dart';
 import 'installer.dart';
@@ -25,7 +26,9 @@ class AppState extends ChangeNotifier {
         true, // false: this device only opens the browser (tests)
     Directory? downloadDir,
     Future<void> Function(Uri, File, String?, void Function(double))? download,
+    BleTransport Function()? bleTransport,
   }) : _store = store ?? ProfileStore(),
+       _bleTransport = bleTransport ?? UniversalBleTransport.new,
        _fetchRelease = fetchRelease ?? fetchLatestRelease,
        _openUrl = openUrl ?? openInBrowser,
        _installer = selfInstall
@@ -47,6 +50,138 @@ class AppState extends ChangeNotifier {
   final Directory? _downloadDir;
   final Future<void> Function(Uri, File, String?, void Function(double))?
   _download;
+  final BleTransport Function()
+  _bleTransport; // the real Bluetooth radio, or a pretend one in tests
+
+  /// The Bluetooth link to Bob, once connected (for when there is no Wi-Fi). Drive, stop, commands and the emergency stop go through it
+  /// while it is [usingBluetooth]; there is no camera over Bluetooth.
+  BleLink? ble;
+  bool bleBusy = false;
+  String? bleProblem;
+  bool _bleKeyTried = false;
+  bool get bleAvailable =>
+      profile?.bleKey != null && profile?.bleDevice != null;
+  bool get usingBluetooth => ble?.ready == true;
+
+  /// Get this device's Bluetooth key from Bob. Needs Wi-Fi (or any network) once, ideally at home, before it is needed.
+  /// Returns a sentence saying what is wrong, or null when the key is saved.
+  Future<String?> prepareBluetooth() async {
+    final p = profile;
+    final c = client;
+    if (p == null || c == null) return 'Not paired with a Bob yet.';
+    if (bleAvailable) return null;
+    bleBusy = true;
+    bleProblem = null;
+    notifyListeners();
+    try {
+      final reply = await c.bleKey();
+      final key = reply['key']?.toString() ?? '';
+      final device = reply['device']?.toString() ?? '';
+      if (key.length != 64 || device.isEmpty) {
+        bleProblem = "Bob's answer wasn't what was expected: update Bob first.";
+      } else {
+        await _saveProfile(p.copyWith(bleKey: key, bleDevice: device));
+        if (reply['enabled'] != true) {
+          bleProblem =
+              'Key saved. Bluetooth control is switched off on Bob: set [ble] enabled = true in his config.local.toml and restart him.';
+        }
+      }
+    } on BobApiException catch (e) {
+      bleProblem = e.status == 404
+          ? "This Bob is too old for Bluetooth: update him first."
+          : "Couldn't get the key: ${e.message}";
+    } catch (_) {
+      bleProblem =
+          "Couldn't reach Bob over Wi-Fi to get the Bluetooth key. Do this once at home.";
+    } finally {
+      bleBusy = false;
+      if (!_disposed) notifyListeners();
+    }
+    return bleProblem;
+  }
+
+  /// Have the key ready before it is needed: once per run, after Bob first answers, with no message and no screen change if it fails
+  /// (an old Bob, or no Wi-Fi at that moment). Tests that must not touch the network never do this.
+  Future<void> _fetchBleKeyQuietly() async {
+    final p = profile;
+    final c = client;
+    if (!autoConnect ||
+        _bleKeyTried ||
+        bleAvailable ||
+        p == null ||
+        c == null ||
+        !online) {
+      return;
+    }
+    _bleKeyTried = true;
+    try {
+      final reply = await c.bleKey();
+      final key = reply['key']?.toString() ?? '';
+      final device = reply['device']?.toString() ?? '';
+      if (key.length == 64 &&
+          device.isNotEmpty &&
+          identical(c, client) &&
+          profile?.fingerprint == p.fingerprint) {
+        await _saveProfile(profile!.copyWith(bleKey: key, bleDevice: device));
+      }
+    } catch (_) {
+      // Quietly: the Bluetooth card has a Get key button for when the person wants it.
+    }
+  }
+
+  /// Connect to Bob over Bluetooth. Returns a sentence saying what is wrong, or null when it worked.
+  Future<String?> connectBluetooth() async {
+    final p = profile;
+    if (p == null) return 'Not paired with a Bob yet.';
+    if (!bleAvailable) {
+      return 'No Bluetooth key yet: connect over Wi-Fi once first.';
+    }
+    if (bleBusy || usingBluetooth) return null;
+    bleBusy = true;
+    bleProblem = null;
+    notifyListeners();
+    final link = BleLink(
+      device: p.bleDevice!,
+      key: p.bleKey!,
+      transport: _bleTransport(),
+    );
+    link.addListener(() {
+      if (!_disposed) notifyListeners();
+    });
+    try {
+      await link.connect();
+      await ble?.disconnect();
+      ble = link;
+    } on BleException catch (e) {
+      bleProblem = e.message;
+      link.dispose();
+    } finally {
+      bleBusy = false;
+      if (!_disposed) notifyListeners();
+    }
+    return bleProblem;
+  }
+
+  Future<void> disconnectBluetooth() async {
+    final link = ble;
+    ble = null;
+    bleProblem = null;
+    try {
+      await link?.drive(0, 0);
+      await link?.disconnect();
+    } catch (_) {}
+    link?.dispose();
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> _saveProfile(BobProfile p) async {
+    final i = profiles.indexWhere((o) => o.fingerprint == p.fingerprint);
+    profiles = [...profiles];
+    if (i >= 0) profiles[i] = p;
+    if (profile?.fingerprint == p.fingerprint) profile = p;
+    await _saveProfiles();
+    if (!_disposed) notifyListeners();
+  }
 
   /// Where the in-app update is: idle, downloading (with [updateProgress]) or installing.
   String updateStage = 'idle';
@@ -200,6 +335,7 @@ class AppState extends ChangeNotifier {
     }
     profile = p;
     addingBob = false;
+    _bleKeyTried = false;
     await _saveProfiles();
     status = {};
     _connect(p);
@@ -213,6 +349,8 @@ class AppState extends ChangeNotifier {
     if (p == null) return;
     // In-flight polls and drive commands belong to the Bob we are leaving.
     unawaited(client?.drive(0, 0).catchError((_) {}));
+    await disconnectBluetooth();
+    _bleKeyTried = false;
     profile = p;
     status = {};
     online = false;
@@ -240,6 +378,7 @@ class AppState extends ChangeNotifier {
     _session++;
     _timer?.cancel();
     _timer = null;
+    await disconnectBluetooth();
     final old = profile;
     try {
       await client?.unpair();
@@ -275,6 +414,9 @@ class AppState extends ChangeNotifier {
         online = true;
         problem = null;
         _failures = 0;
+        unawaited(
+          _fetchBleKeyQuietly(),
+        ); // so Bluetooth is ready before there is no Wi-Fi
       }
     } on BobApiException catch (e) {
       stale = session != _session || !identical(c, client);
@@ -356,6 +498,23 @@ class AppState extends ChangeNotifier {
   }
 
   Future<String> send(String text) async {
+    final link = ble;
+    if (link != null && link.ready) {
+      // Over Bluetooth. The emergency stop also goes out over Wi-Fi if that works, so it can't be missed by either.
+      if (text.trim() == '/estop') {
+        unawaited(link.estop());
+        unawaited(
+          client?.command(text).then((_) {}).catchError((_) {}) ??
+              Future<void>.value(),
+        );
+        return 'Emergency stop sent.';
+      }
+      try {
+        return await link.command(text);
+      } on BleException catch (e) {
+        return e.message;
+      }
+    }
     final c = client;
     if (c == null) return '';
     final out = await c.command(text);
@@ -379,6 +538,13 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> drive(double left, double right) async {
+    final link = ble;
+    if (link != null && link.ready) {
+      try {
+        await link.drive(left, right);
+      } catch (_) {}
+      return;
+    }
     try {
       await client?.drive(left, right);
     } catch (_) {}
@@ -480,6 +646,7 @@ class AppState extends ChangeNotifier {
     _disposed = true;
     _timer?.cancel();
     client?.close();
+    ble?.dispose();
     super.dispose();
   }
 }

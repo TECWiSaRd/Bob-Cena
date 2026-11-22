@@ -6,6 +6,8 @@ stdout, one JSON object per line:
     stdout  {"ready": true, "https_port": 8443, "fingerprint": "..."}        when it is up
     stdin   code     ->  stdout {"code": "K7PQ-2M9X-4TWD"}                  a fresh pairing code
     stdin   handled  ->  stdout {"handled": [["/say hi", "app:Test Mac"]], "moves": [[0.5, 0.5]]}
+    stdin   ble-rx HEX ->  stdout {"tx": ["HEX", ...]}                       one radio packet from the app, answered the way Bob's
+                                                                            Bluetooth side would (blelink.BleCore on the same device list)
     stdin   quit     ->  exits
 """
 import json
@@ -16,6 +18,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import blecodec  # noqa: E402
+import blelink  # noqa: E402
 import config
 from identity import Identity  # noqa: E402
 import stream  # noqa: E402
@@ -24,9 +28,15 @@ from appapi import show_code  # noqa: E402
 
 class FakeController:
     def __init__(self):
-        self.cfg = SimpleNamespace(radio=SimpleNamespace(name="TestBob"))
+        self.cfg = SimpleNamespace(radio=SimpleNamespace(name="TestBob"), ble=SimpleNamespace(enabled=True))
         self.handled, self.moves = [], []
-        self.drive = SimpleNamespace(stop=lambda: self.moves.append("stop"))
+        self.drive = SimpleNamespace(stop=lambda: self.moves.append("stop"), estop=threading.Event(), speed_cap=0.8)
+        self.controls = SimpleNamespace(auto=False)
+        self.drive_mode = False
+
+    def estop(self, source="console"):
+        self.moves.append("estop")
+        self.drive.estop.set()
 
     def handle(self, line, by=None, role="owner"):
         self.handled.append([line, by])
@@ -58,6 +68,8 @@ def main() -> None:
     stream.RECHECK_S = 0.2
     srv.start()
     srv.pairing.identity = srv.start_identity
+    core = blelink.BleCore(config.BleConfig(enabled=True), ctrl, srv.devices, run_command=srv.run_command, label_of=srv.person_label)
+    assembler = blecodec.LineAssembler()
     print(json.dumps({"ready": True, "https_port": srv._httpsd.server_address[1], "fingerprint": srv.fingerprint}), flush=True)
     for line in sys.stdin:
         word = line.strip()
@@ -68,6 +80,11 @@ def main() -> None:
             print(json.dumps({"code": show_code(srv.pairing.new_code("test", person))}), flush=True)
         elif word == "handled":
             print(json.dumps({"handled": ctrl.handled, "moves": ctrl.moves}), flush=True)
+        elif word.startswith("ble-rx "):
+            replies = []
+            for text in assembler.feed(bytes.fromhex(word[len("ble-rx "):])):
+                replies += core.handle(text)
+            print(json.dumps({"tx": [piece.hex() for reply in replies for piece in blecodec.chunks(reply)]}), flush=True)
         elif word == "quit":
             break
     srv.stop()

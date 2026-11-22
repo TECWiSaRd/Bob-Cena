@@ -13,6 +13,8 @@ class BobProfile {
     required this.token,
     required this.device,
     this.user,
+    this.bleKey,
+    this.bleDevice,
   });
 
   final String name;
@@ -23,8 +25,18 @@ class BobProfile {
   final String token;
   final String device; // the name this device was paired under
   final String? user; // who is using the app, for "Welcome back, Adam"
+  final String?
+  bleKey; // this device's Bluetooth key, given by Bob over Wi-Fi: it lets the app drive him with no network at all
+  final String?
+  bleDevice; // the short id Bob knows this device by in Bluetooth messages
 
-  BobProfile copyWith({String? host, int? port, String? user}) => BobProfile(
+  BobProfile copyWith({
+    String? host,
+    int? port,
+    String? user,
+    String? bleKey,
+    String? bleDevice,
+  }) => BobProfile(
     name: name,
     host: host ?? this.host,
     port: port ?? this.port,
@@ -32,6 +44,8 @@ class BobProfile {
     token: token,
     device: device,
     user: user ?? this.user,
+    bleKey: bleKey ?? this.bleKey,
+    bleDevice: bleDevice ?? this.bleDevice,
   );
 
   Map<String, dynamic> toJson() => {
@@ -42,6 +56,8 @@ class BobProfile {
     'token': token,
     'device': device,
     if (user != null) 'user': user,
+    if (bleKey != null) 'bleKey': bleKey,
+    if (bleDevice != null) 'bleDevice': bleDevice,
   };
 
   static BobProfile? fromJson(Object? data) {
@@ -55,6 +71,8 @@ class BobProfile {
         token: data['token'] as String,
         device: data['device'] as String,
         user: data['user'] as String?,
+        bleKey: data['bleKey'] as String?,
+        bleDevice: data['bleDevice'] as String?,
       );
     } catch (_) {
       return null;

@@ -28,6 +28,8 @@
 	<string>MainMenu</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Bob finds your robot on the local network and talks to it there.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bob uses Bluetooth to drive your robot when there is no Wi-Fi.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_bob._tcp</string>

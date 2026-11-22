@@ -4,8 +4,21 @@ For when there is no good Wi-Fi: an event hall, a field, a hotspot that dropped.
 apart, with no network at all. It can **drive, stop, show his status, run the same short list of commands the app uses over Wi-Fi, and press the emergency stop**. It cannot
 send video (Bluetooth is far too slow for a picture), so on a Bluetooth link you steer by looking at the robot.
 
-> **Status: stage 1.** Bob's side is built and tested with a pretend Bluetooth radio. It has **not yet been tried on a real Pi**, and **the app has no Bluetooth button yet**: until it does, use
-> the check tool below to test it, and for an event plan on the Xbox controller or a phone hotspot as well (manual 22).
+> **Status: built, but not yet tried on real Bluetooth.** Bob's side and the app's side are both built, and tested against each other with a pipe standing in for the radio (the app's own code
+> talking to Bob's real protocol code). Nobody has yet tried it over a real Bluetooth link, and the Android part has never been built. **Please test it at home before you rely on it**, with
+> the check tool below first and then the app. For an event, also have the Xbox controller (manual 22) or a phone hotspot as a second way.
+
+## In the app
+
+1. **Once, at home, with Wi-Fi:** open the app and use it normally. The first time it connects it asks Bob for this device's Bluetooth key and keeps it (on the Drive tab, the **Bluetooth** card then says
+   "For when there is no Wi-Fi"). If it can't, the card shows **Get key**.
+2. **At the event:** open the app, go to the **Drive** tab and press **Connect** on the Bluetooth card. It finds Bob by his Bluetooth service (stay within a few metres), says hello and
+   the card changes to **Driving over Bluetooth**. The stick and W A S D work as usual. **There is no camera** on this link: watch Bob instead.
+3. **The emergency stop** (the big button, or Space on a Mac) goes out over Bluetooth, and over Wi-Fi too if that happens to work.
+4. If the link drops, the card says so and Bob stops by himself within half a second; press **Connect** again.
+5. The Mac and Android will ask permission to use Bluetooth the first time (Android 12 and up: "Nearby devices").
+
+Settings, status and the chat page still need Wi-Fi: only driving, stopping and the app's short list of commands go over Bluetooth.
 
 ## What it needs
 
@@ -59,4 +72,4 @@ looking after the code what it prints if it doesn't work. Remove the test device
 | `ERR auth` or `ERR locked` | the wrong key, or too many wrong tries: wait a minute |
 | `ERR session` | say hello again (the app does this by itself) |
 
-The message format is in `blecodec.py`; `tests/test_ble.py` holds numbers the app's own tests must match.
+The message format is in `blecodec.py` (and `app/lib/src/ble_codec.dart`); `tests/test_ble.py` and `app/test/ble_codec_test.dart` hold the same numbers, so the two sides can't drift apart.

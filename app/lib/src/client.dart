@@ -184,6 +184,11 @@ class BobClient {
   Future<void> drive(double left, double right) =>
       _json('POST', '/api/v1/drive', body: {'left': left, 'right': right});
 
+  /// This device's Bluetooth key and the short id Bob knows it by (asked for over Wi-Fi, while paired).
+  /// The map has "key", "device", "enabled" (is Bluetooth control switched on for Bob) and "name".
+  Future<Map<String, dynamic>> bleKey() =>
+      _json('POST', '/api/v1/ble', body: {});
+
   Future<void> unpair() => _json('POST', '/api/v1/unpair', body: {});
 
   /// Bob's camera, as a stream of JPEG pictures. Cancel the subscription to stop.

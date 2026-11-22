@@ -352,6 +352,8 @@ def handle_v1(h, server, method: str, url, query) -> None:
             return h._json({"output": ""})
         return h._json({"output": c.manual(left, right, 0.4)})
     if path == "/ble" and method == "POST":
+        if _read_json(h) is None:                                           # (the body must be read, or it spoils the next request on this connection)
+            return
         if who not in server.devices.devices:                               # an older dashboard token has no device to give a key to
             return h._json({"error": "only a paired device can use Bluetooth"}, 403)
         from blecodec import RX, SERVICE, TX, short_id

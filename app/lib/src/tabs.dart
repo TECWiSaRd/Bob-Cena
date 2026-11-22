@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import 'app_state.dart';
 import 'app_update.dart';
+import 'ble_panel.dart';
 import 'widgets.dart';
 
 const _bottomRoom = 210.0; // keeps content clear of the emergency stop button
@@ -283,6 +284,7 @@ class _DriveTabState extends State<DriveTab> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, _bottomRoom),
         children: [
+          const BluetoothPanel(),
           if (client != null) MjpegView(key: ValueKey(client), client: client),
           const SizedBox(height: 12),
           Center(
